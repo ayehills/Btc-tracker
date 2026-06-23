@@ -58,6 +58,21 @@ Press **Refresh now** (or tick *Auto-refresh every 60s*) to recompute.
 Fitted models are cached per timeframe for ~90s so rapid refreshes stay instant;
 the live spot price is always re-fetched.
 
+## Deploy to a public URL (e.g. from a phone)
+
+The repo includes a `render.yaml` blueprint and a `Procfile`, so it can be
+hosted on a free tier with no local setup:
+
+**Render (recommended):**
+1. Push this branch to GitHub (already done).
+2. On [render.com](https://render.com), sign in with GitHub.
+3. **New +** → **Blueprint** → pick the `ayehills/Btc-tracker` repo.
+4. Render reads `render.yaml`, builds, and gives you a public
+   `https://btc-tracker-nwachukwu.onrender.com`-style URL.
+
+The free tier sleeps after inactivity, so the first hit after idle takes a few
+seconds to wake and fit the model.
+
 ## Files
 
 | File | Purpose |

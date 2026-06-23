@@ -1,0 +1,17 @@
+# Render deployment blueprint for the BTC Tracker · Nwachukwu Model.
+# Deploy from your phone: render.com -> New + -> Blueprint -> connect this repo.
+# Render reads this file and provisions the service automatically.
+services:
+  - type: web
+    name: btc-tracker-nwachukwu
+    runtime: python
+    plan: free
+    branch: claude/btc-price-tracker-qezecd
+    buildCommand: pip install -r requirements.txt
+    # One worker keeps memory within the free 512MB tier; a generous timeout
+    # covers the first request, which fits the model. 2 threads let the live
+    # price endpoint stay responsive while a fit is in progress.
+    startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 2 --timeout 120
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
