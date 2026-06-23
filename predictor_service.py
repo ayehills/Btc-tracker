@@ -8,15 +8,17 @@ Live glue between the price feed and the Bayesian-regression model in
 
 On demand it:
   1. pulls the current BTC/USD spot price (live, every call),
-  2. pulls recent intraday candles (15-minute and 1-hour),
-  3. fits the Bayesian pattern model on that history, and
-  4. forecasts the next-step price change, giving a price estimate for
-     "+15 minutes from now" and for the upcoming "top of the hour".
+  2. pulls the last 700 intraday candles (15-minute and 1-hour),
+  3. fits the Nwachukwu (Bayesian + CFA) model on that history, and
+  4. forecasts the price for the next 15-minute clock mark (:00/:15/:30/:45)
+     and for the upcoming top of the hour.
 
-The expensive step (fitting the pattern library + weights) is cached per
-timeframe so that rapid page refreshes stay instant; only the live spot price
-is re-fetched on every call. The cache is refreshed when a new candle closes
-(or after ``MODEL_TTL`` seconds, whichever comes first).
+Two-speed design so every tick is genuinely fed through the formula: the
+expensive fit (k-means pattern library + weights) is cached and only rebuilt
+when a NEW candle closes, while the cheap prediction step (RBF kernel weighting
++ CFA fusion) is re-run on every request with the live spot appended as the
+most-recent tick. So each 10s poll re-computes the forecast on fresh data
+rather than reusing a frozen delta.
 
 Research and education only. Not financial advice.
 """
@@ -39,10 +41,6 @@ KRAKEN_BASE = "https://api.kraken.com/0/public"
 COINBASE_SPOT = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
 _HEADERS = {"User-Agent": "btc-tracker/1.0 (+bayesian-forecast)"}
 
-# How long a fitted model is reused before being rebuilt (seconds). The model
-# only changes meaningfully when a new candle closes, so this keeps refreshes
-# snappy without going stale.
-MODEL_TTL = 90.0
 REQUEST_TIMEOUT = 20.0
 
 
@@ -100,8 +98,21 @@ def fetch_closes(interval_min: int) -> np.ndarray:
 
 
 # --------------------------------------------------------------------------
-# Model fitting (cached per timeframe)
+# Model fitting (per-candle) and prediction (per-tick)
 # --------------------------------------------------------------------------
+#
+# Two-speed design so every tick actually flows through the formula:
+#   * Fitting the pattern library + linear weights is the expensive step
+#     (k-means clustering). It only needs to change when a *new candle closes*,
+#     so it is cached and keyed on the newest candle timestamp.
+#   * Prediction (RBF kernel weighting + the diverse base models + CFA fusion)
+#     is cheap and is re-run on EVERY request, with the live spot appended as
+#     the most-recent tick. So each 10s poll feeds the live price through the
+#     full Nwachukwu formula rather than reusing a frozen delta.
+
+MAX_TICKS = 700        # analyze the last 700 ticks, as requested
+CANDLE_TTL = 12.0      # seconds; avoid hammering the candle API between polls
+
 
 def _build_config() -> Config:
     """A config tuned for the shorter intraday series we feed the model."""
@@ -117,16 +128,31 @@ def _build_config() -> Config:
     return cfg
 
 
+# Short-lived raw-candle cache shared by fitting and the chart history.
+_candle_cache: dict[int, tuple[float, tuple]] = {}
+_candle_lock = threading.Lock()
+
+
+def _get_candles(interval_min: int) -> tuple[np.ndarray, np.ndarray]:
+    """(times, closes) for an interval, cached briefly to limit API calls."""
+    with _candle_lock:
+        cached = _candle_cache.get(interval_min)
+        if cached and (time.time() - cached[0]) < CANDLE_TTL:
+            return cached[1]
+        data = fetch_candle_series(interval_min)
+        _candle_cache[interval_min] = (time.time(), data)
+        return data
+
+
 @dataclass
-class _ModelCacheEntry:
-    result: NwachukwuResult       # full CFA fusion result for this timeframe
-    last_close: float
-    delta: float                  # predicted next-candle price change
+class _FitEntry:
+    model: NwachukwuModel       # fitted pattern library + CFA base models
+    closes: np.ndarray          # the (<=700) closed-candle closes it was fit on
+    fit_candle_ts: int          # newest candle timestamp at fit time
     n_points: int
-    built_at: float
 
 
-_model_cache: dict[int, _ModelCacheEntry] = {}
+_fit_cache: dict[int, _FitEntry] = {}
 _locks: dict[int, threading.Lock] = {}
 
 
@@ -134,41 +160,58 @@ def _lock_for(interval_min: int) -> threading.Lock:
     return _locks.setdefault(interval_min, threading.Lock())
 
 
-def _fit_model(interval_min: int) -> _ModelCacheEntry:
-    """Fetch history, fit the Nwachukwu (Bayesian + CFA) model, predict delta."""
-    closes = fetch_closes(interval_min)
-    cfg = _build_config()
-    max_len = max(cfg.window_lengths)
-
-    if len(closes) < max_len + cfg.n_clusters + 10:
-        raise RuntimeError(
-            f"not enough {interval_min}m candles ({len(closes)}) to fit the model"
-        )
-
-    model = NwachukwuModel.default(config=cfg).fit(closes)
-    result = model.predict(closes)
-
-    return _ModelCacheEntry(
-        result=result,
-        last_close=float(closes[-1]),
-        delta=float(result.delta),
-        n_points=len(closes),
-        built_at=time.time(),
-    )
-
-
-def _get_model(interval_min: int) -> _ModelCacheEntry:
-    """Return a cached fitted model, rebuilding it when stale."""
+def _get_fitted(interval_min: int) -> _FitEntry:
+    """Return a model fit on the last 700 ticks, refitting when a candle closes."""
     with _lock_for(interval_min):
-        entry = _model_cache.get(interval_min)
-        fresh = (
-            entry is not None
-            and (time.time() - entry.built_at) < MODEL_TTL
+        times, closes = _get_candles(interval_min)
+        times = times[-MAX_TICKS:]
+        closes = closes[-MAX_TICKS:].astype(np.float64)
+        newest_ts = int(times[-1])
+
+        entry = _fit_cache.get(interval_min)
+        if entry is not None and entry.fit_candle_ts == newest_ts:
+            entry.closes = closes  # same candle; keep the fitted model
+            return entry
+
+        cfg = _build_config()
+        max_len = max(cfg.window_lengths)
+        if len(closes) < max_len + cfg.n_clusters + 10:
+            raise RuntimeError(
+                f"not enough {interval_min}m candles ({len(closes)}) to fit"
+            )
+
+        model = NwachukwuModel.default(config=cfg).fit(closes)
+        entry = _FitEntry(
+            model=model,
+            closes=closes,
+            fit_candle_ts=newest_ts,
+            n_points=len(closes),
         )
-        if not fresh:
-            entry = _fit_model(interval_min)
-            _model_cache[interval_min] = entry
+        _fit_cache[interval_min] = entry
         return entry
+
+
+@dataclass
+class _LivePrediction:
+    result: NwachukwuResult
+    n_points: int
+    fit_candle_ts: int
+
+
+def _predict_live(interval_min: int, spot: float) -> _LivePrediction:
+    """Run the Nwachukwu formula NOW, feeding the live spot as the newest tick."""
+    entry = _get_fitted(interval_min)
+    series = entry.closes
+    if spot and np.isfinite(spot):
+        # Append the live price as the most-recent tick so the prediction
+        # responds to live movement within the forming candle.
+        series = np.append(entry.closes, float(spot))
+    result = entry.model.predict(series)
+    return _LivePrediction(
+        result=result,
+        n_points=entry.n_points,
+        fit_candle_ts=entry.fit_candle_ts,
+    )
 
 
 # --------------------------------------------------------------------------
@@ -186,6 +229,7 @@ class Forecast:
     history_points: int
     combination: str = ""             # CFA strategy used, e.g. "score/diversity"
     base_models: list = None          # [{name, price, diversity, weight}, ...]
+    fit_candle_utc: str = ""          # candle the model was last fit on (provable)
 
 
 @dataclass
@@ -210,8 +254,14 @@ def _next_top_of_hour(now: datetime) -> datetime:
     return nxt
 
 
-def _base_breakdown(entry: _ModelCacheEntry) -> list:
-    r = entry.result
+def _next_quarter_hour(now: datetime) -> datetime:
+    """Next :00 / :15 / :30 / :45 clock boundary after ``now``."""
+    q = (now.minute // 15 + 1) * 15
+    nxt = now.replace(minute=0, second=0, microsecond=0) + timedelta(minutes=q)
+    return nxt
+
+
+def _base_breakdown(r: NwachukwuResult) -> list:
     rows = [
         {
             "name": name,
@@ -232,32 +282,36 @@ def get_analysis() -> Analysis:
     try:
         spot = fetch_spot()
 
-        # --- 15-minute-ahead forecast (from 15m candle model) ---
-        m15 = _get_model(15)
-        # Anchor the predicted change to the live spot so the number reflects
-        # the price you actually see right now.
-        price_15 = spot + m15.delta
+        def _fit_iso(ts: int) -> str:
+            return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M UTC")
+
+        # --- Next 15-minute mark (:00/:15/:30/:45), 15m candle model ---
+        # Re-run the formula NOW with the live spot fed in as the newest tick.
+        m15 = _predict_live(15, spot)
+        nxt_q = _next_quarter_hour(now)
+        mins_to_q = max(1, int(round((nxt_q - now).total_seconds() / 60)))
         f15 = Forecast(
-            label="In 15 minutes",
-            target_time_utc=(now + timedelta(minutes=15)).strftime("%H:%M UTC"),
-            minutes_ahead=15,
-            predicted_price=price_15,
-            delta=m15.delta,
-            direction=_direction(m15.delta),
+            label=f"Next 15-min mark ({nxt_q.strftime('%H:%M')})",
+            target_time_utc=nxt_q.strftime("%H:%M UTC"),
+            minutes_ahead=mins_to_q,
+            predicted_price=m15.result.predicted_price,
+            delta=m15.result.delta,
+            direction=_direction(m15.result.delta),
             history_points=m15.n_points,
             combination=m15.result.combination,
-            base_models=_base_breakdown(m15),
+            base_models=_base_breakdown(m15.result),
+            fit_candle_utc=_fit_iso(m15.fit_candle_ts),
         )
 
         # --- Top-of-the-hour forecast (from 1h candle model) ---
-        h1 = _get_model(60)
+        h1 = _predict_live(60, spot)
         toh = _next_top_of_hour(now)
         mins_to_hour = int(round((toh - now).total_seconds() / 60))
         # The hourly model predicts the next hourly close; scale the predicted
         # change by the fraction of the hour remaining so a forecast made at
         # :55 isn't treated the same as one made at :05.
         scale = max(0.0, min(1.0, mins_to_hour / 60.0))
-        delta_hour = h1.delta * scale
+        delta_hour = h1.result.delta * scale
         price_hour = spot + delta_hour
         fhour = Forecast(
             label="Top of the hour",
@@ -268,7 +322,8 @@ def get_analysis() -> Analysis:
             direction=_direction(delta_hour),
             history_points=h1.n_points,
             combination=h1.result.combination,
-            base_models=_base_breakdown(h1),
+            base_models=_base_breakdown(h1.result),
+            fit_candle_utc=_fit_iso(h1.fit_candle_ts),
         )
 
         return Analysis(
@@ -291,30 +346,18 @@ def get_analysis() -> Analysis:
 # Live payload (price history for charting + spot + forecasts)
 # --------------------------------------------------------------------------
 
-# Recent 15m candle history is cached briefly so frequent polls don't hammer
-# the candle API; the live spot is always fetched fresh by get_analysis.
-_history_cache: dict[int, tuple[float, list]] = {}
-_history_lock = threading.Lock()
-HISTORY_TTL = 30.0
-
-
 def get_history(interval_min: int = 15, limit: int = 96) -> list:
     """Recent candle history as ``[{"t": iso, "ts": secs, "price": close}, ...]``."""
-    with _history_lock:
-        cached = _history_cache.get(interval_min)
-        if cached and (time.time() - cached[0]) < HISTORY_TTL:
-            return cached[1][-limit:]
-        times, closes = fetch_candle_series(interval_min)
-        rows = [
-            {
-                "ts": int(t),
-                "t": datetime.fromtimestamp(int(t), tz=timezone.utc).isoformat(),
-                "price": float(c),
-            }
-            for t, c in zip(times, closes)
-        ]
-        _history_cache[interval_min] = (time.time(), rows)
-        return rows[-limit:]
+    times, closes = _get_candles(interval_min)
+    rows = [
+        {
+            "ts": int(t),
+            "t": datetime.fromtimestamp(int(t), tz=timezone.utc).isoformat(),
+            "price": float(c),
+        }
+        for t, c in zip(times, closes)
+    ]
+    return rows[-limit:]
 
 
 def get_live(history_interval: int = 15, history_limit: int = 96) -> dict:
@@ -339,6 +382,7 @@ def get_live(history_interval: int = 15, history_limit: int = 96) -> dict:
                 "history_points": f.history_points,
                 "combination": f.combination,
                 "base_models": f.base_models or [],
+                "fit_candle_utc": f.fit_candle_utc,
             }
             for f in a.forecasts
         ],

@@ -92,7 +92,8 @@
     <div class="sub">
       Live price &amp; chart with the <strong>Nwachukwu Model</strong> — Bayesian regression
       (Shah&nbsp;&amp;&nbsp;Zhang, 2014) blended with Combinatorial Fusion Analysis (Wu&nbsp;et&nbsp;al., IEEE&nbsp;CAI).
-      Updates automatically every 10&nbsp;seconds.
+      Analyzes the <strong>last 700 ticks</strong>; every 10&nbsp;seconds the live price is fed back
+      through the formula. Forecasts the next <strong>:00/:15/:30/:45</strong> mark and the top of the hour.
     </div>
 
     <div id="err" class="err" style="display:none;"></div>
@@ -154,12 +155,14 @@
       const actual = hist.map(h => h.price);
       const n = hist.length;
 
-      // Append the two forecast slots.
-      labels.push('+15m', 'Top of hr');
-      const actualData = actual.concat([null, null]);
-
       const f15 = payload.forecasts[0];
       const fhour = payload.forecasts[1];
+
+      // Append the two forecast slots, labelled with their clock targets.
+      const lbl15 = f15 ? f15.target_time_utc.replace(' UTC', '') : '+15m';
+      const lblH = fhour ? fhour.target_time_utc.replace(' UTC', '') : 'Top hr';
+      labels.push(lbl15, lblH);
+      const actualData = actual.concat([null, null]);
       const forecastData = new Array(n + 2).fill(null);
       if (n > 0) forecastData[n - 1] = payload.spot;     // anchor at live price
       if (f15) forecastData[n] = f15.predicted_price;
@@ -223,7 +226,8 @@
               <span class="delta ${dc}">${(f.delta>=0?'+':'')}${Number(f.delta).toLocaleString('en-US',{maximumFractionDigits:2})}</span>
               <span class="pill ${dc}">${f.direction}</span>
             </div>
-            <div class="meta" style="margin-top:8px;">Target ${f.target_time_utc} · ${f.minutes_ahead} min ahead · ${f.history_points} candles</div>
+            <div class="meta" style="margin-top:8px;">Target ${f.target_time_utc} · ${f.minutes_ahead} min ahead · ${f.history_points} ticks analyzed</div>
+            <div class="meta" style="margin-top:3px; font-size:11px;">Model fit @ candle ${f.fit_candle_utc} · live tick fed through the formula</div>
             <details class="fusion">
               <summary>CFA fusion · ${f.combination}</summary>
               <table>
