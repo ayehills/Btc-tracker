@@ -68,8 +68,8 @@ def fetch_spot() -> float:
         return float(r.json()["data"]["amount"])
 
 
-def fetch_candle_series(interval_min: int) -> tuple[np.ndarray, np.ndarray]:
-    """Ascending (timestamps_seconds, close_prices) for the given interval.
+def fetch_candle_series(interval_min: int):
+    """Ascending (timestamps, closes, volumes) for the given interval.
 
     Uses Kraken's public OHLC endpoint, which returns up to ~720 candles.
     """
@@ -89,12 +89,37 @@ def fetch_candle_series(interval_min: int) -> tuple[np.ndarray, np.ndarray]:
     # Each row: [time, open, high, low, close, vwap, volume, count]
     times = np.array([int(row[0]) for row in series], dtype=np.int64)
     closes = np.array([float(row[4]) for row in series], dtype=np.float64)
-    return times, closes
+    volumes = np.array([float(row[6]) for row in series], dtype=np.float64)
+    return times, closes, volumes
 
 
 def fetch_closes(interval_min: int) -> np.ndarray:
     """Ascending array of candle close prices for the given interval (minutes)."""
     return fetch_candle_series(interval_min)[1]
+
+
+def fetch_order_flow() -> float:
+    """Live order-book imbalance r = (bid_vol - ask_vol) / (bid_vol + ask_vol).
+
+    Positive => more resting bid size than ask (buy pressure). Computed over the
+    top 25 levels of Kraken's public order book. Returns 0.0 on any failure so
+    the forecast degrades gracefully to price-only.
+    """
+    try:
+        r = requests.get(
+            f"{KRAKEN_BASE}/Depth",
+            params={"pair": "XBTUSD", "count": 25},
+            headers=_HEADERS,
+            timeout=REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        book = next(iter(r.json()["result"].values()))
+        bid_vol = sum(float(x[1]) for x in book["bids"])
+        ask_vol = sum(float(x[1]) for x in book["asks"])
+        denom = bid_vol + ask_vol
+        return float((bid_vol - ask_vol) / denom) if denom else 0.0
+    except Exception:
+        return 0.0
 
 
 # --------------------------------------------------------------------------
@@ -133,8 +158,8 @@ _candle_cache: dict[int, tuple[float, tuple]] = {}
 _candle_lock = threading.Lock()
 
 
-def _get_candles(interval_min: int) -> tuple[np.ndarray, np.ndarray]:
-    """(times, closes) for an interval, cached briefly to limit API calls."""
+def _get_candles(interval_min: int):
+    """(times, closes, volumes) for an interval, cached briefly."""
     with _candle_lock:
         cached = _candle_cache.get(interval_min)
         if cached and (time.time() - cached[0]) < CANDLE_TTL:
@@ -148,6 +173,7 @@ def _get_candles(interval_min: int) -> tuple[np.ndarray, np.ndarray]:
 class _FitEntry:
     model: NwachukwuModel       # fitted pattern library + CFA base models
     closes: np.ndarray          # the (<=700) closed-candle closes it was fit on
+    volumes: np.ndarray         # aligned candle volumes
     fit_candle_ts: int          # newest candle timestamp at fit time
     n_points: int
 
@@ -163,14 +189,16 @@ def _lock_for(interval_min: int) -> threading.Lock:
 def _get_fitted(interval_min: int) -> _FitEntry:
     """Return a model fit on the last 700 ticks, refitting when a candle closes."""
     with _lock_for(interval_min):
-        times, closes = _get_candles(interval_min)
+        times, closes, volumes = _get_candles(interval_min)
         times = times[-MAX_TICKS:]
         closes = closes[-MAX_TICKS:].astype(np.float64)
+        volumes = volumes[-MAX_TICKS:].astype(np.float64)
         newest_ts = int(times[-1])
 
         entry = _fit_cache.get(interval_min)
         if entry is not None and entry.fit_candle_ts == newest_ts:
             entry.closes = closes  # same candle; keep the fitted model
+            entry.volumes = volumes
             return entry
 
         cfg = _build_config()
@@ -180,10 +208,14 @@ def _get_fitted(interval_min: int) -> _FitEntry:
                 f"not enough {interval_min}m candles ({len(closes)}) to fit"
             )
 
-        model = NwachukwuModel.default(config=cfg).fit(closes)
+        # The 1-minute horizon uses the fast thrust roster (validated to catch
+        # quick buy-side moves); slower horizons use the price-pattern roster.
+        builder = NwachukwuModel.fast if interval_min <= 1 else NwachukwuModel.default
+        model = builder(config=cfg).fit(closes, volumes)
         entry = _FitEntry(
             model=model,
             closes=closes,
+            volumes=volumes,
             fit_candle_ts=newest_ts,
             n_points=len(closes),
         )
@@ -198,15 +230,22 @@ class _LivePrediction:
     fit_candle_ts: int
 
 
-def _predict_live(interval_min: int, spot: float) -> _LivePrediction:
-    """Run the Nwachukwu formula NOW, feeding the live spot as the newest tick."""
+def _predict_live(interval_min: int, spot: float,
+                  order_flow_r: Optional[float] = None) -> _LivePrediction:
+    """Run the Nwachukwu formula NOW, feeding the live spot as the newest tick.
+
+    ``order_flow_r`` (live order-book imbalance) adds a buy/sell-pressure model
+    to the fusion for this prediction only.
+    """
     entry = _get_fitted(interval_min)
     series = entry.closes
+    volumes = entry.volumes
     if spot and np.isfinite(spot):
         # Append the live price as the most-recent tick so the prediction
         # responds to live movement within the forming candle.
         series = np.append(entry.closes, float(spot))
-    result = entry.model.predict(series)
+        volumes = np.append(entry.volumes, entry.volumes[-1])
+    result = entry.model.predict(series, volumes, order_flow_r=order_flow_r)
     return _LivePrediction(
         result=result,
         n_points=entry.n_points,
@@ -281,12 +320,32 @@ def get_analysis() -> Analysis:
     now = datetime.now(timezone.utc)
     try:
         spot = fetch_spot()
+        # Live order-book imbalance (buy/sell pressure) drives the fast models.
+        flow_r = fetch_order_flow()
+        flow_label = ("buy pressure" if flow_r > 0.05 else
+                      "sell pressure" if flow_r < -0.05 else "balanced")
 
         def _fit_iso(ts: int) -> str:
             return datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%H:%M UTC")
 
+        # --- Next 1-2 minutes: quick buy/sell thrust (1m model + order flow) ---
+        m1 = _predict_live(1, spot, order_flow_r=flow_r)
+        f1 = Forecast(
+            label="Next 1–2 min (thrust)",
+            target_time_utc=(now + timedelta(minutes=2)).strftime("%H:%M UTC"),
+            minutes_ahead=2,
+            predicted_price=m1.result.predicted_price,
+            delta=m1.result.delta,
+            direction=_direction(m1.result.delta),
+            history_points=m1.n_points,
+            combination=f"{m1.result.combination} · flow r={flow_r:+.2f} ({flow_label})",
+            base_models=_base_breakdown(m1.result),
+            fit_candle_utc=_fit_iso(m1.fit_candle_ts),
+        )
+
         # --- Next 15-minute mark (:00/:15/:30/:45), 15m candle model ---
         # Re-run the formula NOW with the live spot fed in as the newest tick.
+        # Order flow is reserved for the fast model (validated there, not here).
         m15 = _predict_live(15, spot)
         nxt_q = _next_quarter_hour(now)
         mins_to_q = max(1, int(round((nxt_q - now).total_seconds() / 60)))
@@ -330,7 +389,7 @@ def get_analysis() -> Analysis:
             ok=True,
             spot=spot,
             as_of_utc=now.strftime("%Y-%m-%d %H:%M:%S UTC"),
-            forecasts=[f15, fhour],
+            forecasts=[f1, f15, fhour],
         )
     except Exception as exc:  # surfaced on the page rather than crashing
         return Analysis(
@@ -348,7 +407,7 @@ def get_analysis() -> Analysis:
 
 def get_history(interval_min: int = 15, limit: int = 96) -> list:
     """Recent candle history as ``[{"t": iso, "ts": secs, "price": close}, ...]``."""
-    times, closes = _get_candles(interval_min)
+    times, closes, _ = _get_candles(interval_min)
     rows = [
         {
             "ts": int(t),

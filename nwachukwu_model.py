@@ -66,41 +66,51 @@ class BasePrediction:
 
 
 class BaseForecaster:
-    """Interface: fit on a 1-D close series, then predict the next price."""
+    """Interface: fit on a 1-D close series, then predict the next price.
+
+    ``predict_from`` accepts an optional aligned ``volumes`` array so that
+    volume- and thrust-aware models can use it; price-only models ignore it.
+    """
 
     name: str = "base"
 
-    def predict_from(self, closes: np.ndarray) -> float:
+    def predict_from(self, closes: np.ndarray,
+                     volumes: Optional[np.ndarray] = None) -> float:
         """One-step-ahead point prediction using ``closes`` as the history."""
         raise NotImplementedError
 
-    def fit(self, closes: np.ndarray) -> "BaseForecaster":
+    def fit(self, closes: np.ndarray,
+            volumes: Optional[np.ndarray] = None) -> "BaseForecaster":
         return self
 
     # Residual std via a light walk-forward over the most recent window. This
     # mirrors the paper's "std derived from the test set" but stays cheap.
-    def residual_std(self, closes: np.ndarray, window: int = 60) -> float:
+    def residual_std(self, closes: np.ndarray,
+                     volumes: Optional[np.ndarray] = None,
+                     window: int = 60) -> float:
         n = len(closes)
         span = min(window, n - 5)
         if span <= 2:
             return float(np.std(np.diff(closes)) or 1.0)
         errs = []
         for t in range(n - span, n - 1):
-            pred = self.predict_from(closes[: t + 1])
+            v = None if volumes is None else volumes[: t + 1]
+            pred = self.predict_from(closes[: t + 1], v)
             errs.append(closes[t + 1] - pred)
         s = float(np.std(errs)) if errs else 0.0
         # Never let std collapse to zero (degenerate scoring system).
         return s if s > _EPS else float(np.std(np.diff(closes)) or 1.0)
 
-    def predict(self, closes: np.ndarray) -> BasePrediction:
-        return BasePrediction(self.name, self.predict_from(closes),
-                              self.residual_std(closes))
+    def predict(self, closes: np.ndarray,
+                volumes: Optional[np.ndarray] = None) -> BasePrediction:
+        return BasePrediction(self.name, self.predict_from(closes, volumes),
+                              self.residual_std(closes, volumes))
 
 
 class RandomWalkForecaster(BaseForecaster):
     name = "RandomWalk"
 
-    def predict_from(self, closes: np.ndarray) -> float:
+    def predict_from(self, closes, volumes=None) -> float:
         return float(closes[-1])
 
 
@@ -111,7 +121,7 @@ class MomentumForecaster(BaseForecaster):
         self.k = k
         self.name = f"Momentum{k}"
 
-    def predict_from(self, closes: np.ndarray) -> float:
+    def predict_from(self, closes, volumes=None) -> float:
         if len(closes) < self.k + 1:
             return float(closes[-1])
         drift = float(np.mean(np.diff(closes[-(self.k + 1):])))
@@ -126,11 +136,109 @@ class MeanReversionForecaster(BaseForecaster):
         self.alpha = alpha
         self.name = f"MeanRev{n}"
 
-    def predict_from(self, closes: np.ndarray) -> float:
+    def predict_from(self, closes, volumes=None) -> float:
         n = min(self.n, len(closes))
         sma = float(np.mean(closes[-n:]))
         last = float(closes[-1])
         return last + self.alpha * (sma - last)
+
+
+class VolumeThrustForecaster(BaseForecaster):
+    """Detects volume-confirmed buying/selling thrust (quick movements).
+
+    Recent drift is amplified when it is backed by a volume surge (current
+    volume above its recent average) and damped when volume is thin. This is
+    the model that leans into a fast buy-side push the moment it shows up with
+    real volume behind it.
+    """
+
+    def __init__(self, k: int = 5, vlookback: int = 30, gain: float = 1.5):
+        self.k = k
+        self.vlookback = vlookback
+        self.gain = gain
+        self.name = "VolThrust"
+
+    def predict_from(self, closes, volumes=None) -> float:
+        last = float(closes[-1])
+        if len(closes) < self.k + 1:
+            return last
+        drift = float(np.mean(np.diff(closes[-(self.k + 1):])))
+        surge = 1.0
+        if volumes is not None and len(volumes) >= self.vlookback:
+            recent_v = float(volumes[-1])
+            avg_v = float(np.mean(volumes[-self.vlookback:])) or _EPS
+            # Surge ratio capped so a single spike can't blow up the estimate.
+            surge = min(3.0, max(0.3, recent_v / avg_v))
+        return last + drift * self.gain * surge
+
+
+class RateOfChangeForecaster(BaseForecaster):
+    """Rate-of-change momentum: projects the recent % move forward."""
+
+    def __init__(self, n: int = 8, damp: float = 0.5):
+        self.n = n
+        self.damp = damp
+        self.name = f"ROC{n}"
+
+    def predict_from(self, closes, volumes=None) -> float:
+        last = float(closes[-1])
+        if len(closes) < self.n + 1:
+            return last
+        roc = (last - float(closes[-self.n - 1])) / max(abs(float(closes[-self.n - 1])), _EPS)
+        return last * (1.0 + self.damp * roc / self.n)
+
+
+class RsiForecaster(BaseForecaster):
+    """Relative Strength Index: lean with momentum, fade extremes (>70/<30)."""
+
+    def __init__(self, n: int = 14, gain: float = 0.4):
+        self.n = n
+        self.gain = gain
+        self.name = "RSI"
+
+    def predict_from(self, closes, volumes=None) -> float:
+        last = float(closes[-1])
+        if len(closes) < self.n + 1:
+            return last
+        diffs = np.diff(closes[-(self.n + 1):])
+        gains = float(np.mean(np.where(diffs > 0, diffs, 0.0)))
+        losses = float(np.mean(np.where(diffs < 0, -diffs, 0.0)))
+        rs = gains / (losses + _EPS)
+        rsi = 100.0 - 100.0 / (1.0 + rs)
+        vol = float(np.std(diffs)) or 1.0
+        # rsi-50 in [-50,50]; positive => buying momentum => tilt up, but fade
+        # the extremes (>70 or <30) where reversals are likely.
+        tilt = (rsi - 50.0) / 50.0
+        if rsi > 70.0 or rsi < 30.0:
+            tilt = -tilt * 0.5
+        return last + self.gain * tilt * vol
+
+
+class OrderFlowForecaster(BaseForecaster):
+    """Live order-book imbalance tilt (buy/sell pressure). Live-only.
+
+    ``r = (bid_vol - ask_vol) / (bid_vol + ask_vol)`` in [-1, 1]: positive means
+    more resting bid size than ask size (buy pressure). It has no historical
+    series (order books aren't in the candle feed), so this model is only added
+    for the live prediction, not the backtest. The tilt is scaled by recent
+    volatility so it stays in a sensible range.
+    """
+
+    def __init__(self, r: float, gain: float = 2.0):
+        self.r = float(r)
+        self.gain = gain
+        self.name = "OrderFlow"
+
+    def predict_from(self, closes, volumes=None) -> float:
+        last = float(closes[-1])
+        vol = float(np.std(np.diff(closes[-20:]))) if len(closes) > 2 else 1.0
+        return last + self.gain * self.r * (vol or 1.0)
+
+    def residual_std(self, closes, volumes=None, window: int = 60) -> float:
+        # No historical r to walk forward; use recent one-step volatility.
+        diffs = np.diff(closes[-min(len(closes) - 1, window):]) if len(closes) > 2 else np.array([1.0])
+        s = float(np.std(diffs))
+        return s if s > _EPS else 1.0
 
 
 def _ema(series: np.ndarray, span: int) -> np.ndarray:
@@ -149,7 +257,7 @@ class EmaMacdForecaster(BaseForecaster):
         self.fast, self.slow, self.signal = fast, slow, signal
         self.name = "EMA_MACD"
 
-    def predict_from(self, closes: np.ndarray) -> float:
+    def predict_from(self, closes, volumes=None) -> float:
         if len(closes) < self.slow + self.signal:
             return float(closes[-1])
         macd = _ema(closes, self.fast) - _ema(closes, self.slow)
@@ -176,13 +284,13 @@ class BayesianForecaster(BaseForecaster):
         self.split = split
         self._model: Optional[BayesianRegressionModel] = None
 
-    def fit(self, closes: np.ndarray) -> "BayesianForecaster":
+    def fit(self, closes: np.ndarray, volumes=None) -> "BayesianForecaster":
         cut = int(len(closes) * self.split)
         self._model = BayesianRegressionModel(config=self.config)
         self._model.fit(closes[:cut], closes[cut:])
         return self
 
-    def predict_from(self, closes: np.ndarray) -> float:
+    def predict_from(self, closes, volumes=None) -> float:
         if self._model is None or not self._model.is_fitted():
             self.fit(closes)
         delta = self._model.predict_delta(closes)
@@ -190,7 +298,7 @@ class BayesianForecaster(BaseForecaster):
 
     # The Bayesian walk-forward is comparatively expensive; estimate its
     # uncertainty from realized one-step volatility instead of re-fitting.
-    def residual_std(self, closes: np.ndarray, window: int = 60) -> float:
+    def residual_std(self, closes, volumes=None, window: int = 60) -> float:
         span = min(window, len(closes) - 1)
         diffs = np.diff(closes[-(span + 1):]) if span > 1 else np.diff(closes)
         s = float(np.std(diffs))
@@ -251,6 +359,11 @@ class NwachukwuModel:
     @classmethod
     def default(cls, config: Optional[Config] = None,
                 weighting: str = "diversity") -> "NwachukwuModel":
+        """Roster for the 15-minute / hourly horizons (price-pattern driven).
+
+        Backtests showed the fast thrust models add noise at these slower
+        horizons, so they are reserved for :meth:`fast`.
+        """
         return cls(
             base_models=[
                 BayesianForecaster(config=config),
@@ -262,21 +375,59 @@ class NwachukwuModel:
             weighting=weighting,
         )
 
-    def fit(self, closes: np.ndarray) -> "NwachukwuModel":
+    @classmethod
+    def fast(cls, config: Optional[Config] = None,
+             weighting: str = "diversity") -> "NwachukwuModel":
+        """Roster for the fast (1-minute) horizon: catches quick buy/sell thrust.
+
+        Volume-confirmed thrust, rate-of-change and RSI momentum sit alongside
+        short-window momentum and the Bayesian pattern model. The live
+        order-book imbalance model is added per-prediction in ``predict``.
+        """
+        return cls(
+            base_models=[
+                BayesianForecaster(config=config),
+                MomentumForecaster(k=3),
+                VolumeThrustForecaster(k=3),
+                RateOfChangeForecaster(n=5),
+                RsiForecaster(n=9),
+                EmaMacdForecaster(fast=6, slow=13, signal=5),
+                RandomWalkForecaster(),
+            ],
+            weighting=weighting,
+        )
+
+    def fit(self, closes: np.ndarray, volumes=None) -> "NwachukwuModel":
         closes = np.asarray(closes, dtype=np.float64).ravel()
+        self._volumes = None if volumes is None else np.asarray(volumes, dtype=np.float64).ravel()
         for m in self.base_models:
-            m.fit(closes)
+            m.fit(closes, self._volumes)
         self._closes = closes
         return self
 
-    def predict(self, closes: Optional[np.ndarray] = None) -> NwachukwuResult:
+    def predict(self, closes: Optional[np.ndarray] = None,
+                volumes=None, order_flow_r: Optional[float] = None) -> NwachukwuResult:
         closes = np.asarray(
             self._closes if closes is None else closes, dtype=np.float64
         ).ravel()
+        if volumes is None:
+            volumes = getattr(self, "_volumes", None)
+        if volumes is not None:
+            volumes = np.asarray(volumes, dtype=np.float64).ravel()
+            # Align volume length to the (possibly spot-extended) close series.
+            if len(volumes) < len(closes):
+                volumes = np.append(volumes, volumes[-1])
+            volumes = volumes[-len(closes):]
         last = float(closes[-1])
 
+        # Live-only order-flow model: added when a fresh order-book imbalance is
+        # supplied (it has no historical series, so it never enters the backtest).
+        models = list(self.base_models)
+        if order_flow_r is not None and np.isfinite(order_flow_r):
+            models = models + [OrderFlowForecaster(float(order_flow_r))]
+
         # 1) Each base model -> a (mean, std) prediction.
-        preds = [m.predict(closes) for m in self.base_models]
+        preds = [m.predict(closes, volumes) for m in models]
 
         # 2) Build a shared candidate-price grid spanning all truncated normals.
         lo = min(p.mean - self.trunc_std * p.std for p in preds)

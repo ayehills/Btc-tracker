@@ -92,8 +92,9 @@
     <div class="sub">
       Live price &amp; chart with the <strong>Nwachukwu Model</strong> — Bayesian regression
       (Shah&nbsp;&amp;&nbsp;Zhang, 2014) blended with Combinatorial Fusion Analysis (Wu&nbsp;et&nbsp;al., IEEE&nbsp;CAI).
-      Analyzes the <strong>last 700 ticks</strong>; every 10&nbsp;seconds the live price is fed back
-      through the formula. Forecasts the next <strong>:00/:15/:30/:45</strong> mark and the top of the hour.
+      Analyzes the <strong>last 700 ticks</strong> with live order-book pressure; every 10&nbsp;seconds the
+      price is fed back through the formula. Forecasts a fast <strong>1–2&nbsp;min buy/sell thrust</strong>,
+      the next <strong>:00/:15/:30/:45</strong> mark, and the top of the hour.
     </div>
 
     <div id="err" class="err" style="display:none;"></div>
@@ -155,20 +156,19 @@
       const actual = hist.map(h => h.price);
       const n = hist.length;
 
-      const f15 = payload.forecasts[0];
-      const fhour = payload.forecasts[1];
+      // Append one slot per forecast (1m thrust, 15m mark, top of hour),
+      // labelled with each one's clock target.
+      const fc = payload.forecasts || [];
+      const k = fc.length;
+      fc.forEach(f => labels.push(f.target_time_utc.replace(' UTC', '')));
+      const actualData = actual.concat(new Array(k).fill(null));
 
-      // Append the two forecast slots, labelled with their clock targets.
-      const lbl15 = f15 ? f15.target_time_utc.replace(' UTC', '') : '+15m';
-      const lblH = fhour ? fhour.target_time_utc.replace(' UTC', '') : 'Top hr';
-      labels.push(lbl15, lblH);
-      const actualData = actual.concat([null, null]);
-      const forecastData = new Array(n + 2).fill(null);
+      const forecastData = new Array(n + k).fill(null);
       if (n > 0) forecastData[n - 1] = payload.spot;     // anchor at live price
-      if (f15) forecastData[n] = f15.predicted_price;
-      if (fhour) forecastData[n + 1] = fhour.predicted_price;
+      fc.forEach((f, i) => { forecastData[n + i] = f.predicted_price; });
 
-      const upTotal = fhour ? (fhour.predicted_price >= payload.spot) : true;
+      const lastF = k ? fc[k - 1] : null;
+      const upTotal = lastF ? (lastF.predicted_price >= payload.spot) : true;
       const fColor = upTotal ? '#2ecc71' : '#ff5d5d';
 
       const ctx = document.getElementById('chart').getContext('2d');
