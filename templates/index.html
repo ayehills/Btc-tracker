@@ -4,6 +4,7 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>BTC Tracker — Nwachukwu Model</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
   <style>
     :root {
       --bg: #0b0e14;
@@ -14,75 +15,71 @@
       --up: #2ecc71;
       --down: #ff5d5d;
       --flat: #c0c6d0;
-      --accent: #f7931a; /* bitcoin orange */
+      --accent: #f7931a;
     }
     * { box-sizing: border-box; }
     body {
       margin: 0; background: var(--bg); color: var(--text);
       font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      min-height: 100vh; display: flex; align-items: flex-start; justify-content: center;
+      min-height: 100vh; display: flex; justify-content: center;
     }
-    .wrap { width: 100%; max-width: 760px; padding: 28px 18px 60px; }
-    header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .wrap { width: 100%; max-width: 880px; padding: 26px 18px 60px; }
+    header { display: flex; align-items: center; gap: 12px; }
     .logo {
       width: 34px; height: 34px; border-radius: 50%; background: var(--accent);
       color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center;
     }
-    h1 { font-size: 20px; margin: 0; font-weight: 700; }
-    .sub { color: var(--muted); font-size: 13px; margin: 2px 0 22px; }
+    h1 { font-size: 19px; margin: 0; font-weight: 700; }
+    .sub { color: var(--muted); font-size: 13px; margin: 6px 0 20px; line-height: 1.5; }
 
-    .spot {
-      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-      padding: 22px 24px; margin-bottom: 18px;
+    .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+    .spot .k { color: var(--muted); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; }
+    .spot .v { font-size: 46px; font-weight: 800; line-height: 1.05; margin-top: 2px; }
+    .spot .chg { font-size: 14px; font-weight: 700; margin-top: 4px; }
+    .live {
+      display: inline-flex; align-items: center; gap: 7px; color: var(--muted);
+      font-size: 12px;
     }
-    .spot .k { color: var(--muted); font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
-    .spot .v { font-size: 44px; font-weight: 800; margin-top: 4px; }
-    .spot .t { color: var(--muted); font-size: 12px; margin-top: 8px; }
+    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 0 rgba(46,204,113,.6); animation: pulse 2s infinite; }
+    .dot.paused { background: var(--muted); animation: none; box-shadow: none; }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 0 rgba(46,204,113,.55); }
+      70% { box-shadow: 0 0 0 8px rgba(46,204,113,0); }
+      100% { box-shadow: 0 0 0 0 rgba(46,204,113,0); }
+    }
+
+    .chartcard {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 16px 16px 8px; margin: 18px 0;
+    }
+    .chartwrap { position: relative; height: 320px; }
 
     .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } .spot .v { font-size: 38px; } }
 
-    .card {
-      background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px;
-    }
+    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
     .card .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
     .card .price { font-size: 30px; font-weight: 800; margin: 8px 0 2px; }
     .card .meta { font-size: 13px; color: var(--muted); }
     .delta { font-weight: 700; }
-    .up { color: var(--up); }
-    .down { color: var(--down); }
-    .flat { color: var(--flat); }
-    .pill {
-      display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px;
-      border-radius: 999px; margin-left: 8px;
-    }
+    .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
+    .pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
     .pill.up { background: rgba(46,204,113,.12); }
     .pill.down { background: rgba(255,93,93,.12); }
     .pill.flat { background: rgba(192,198,208,.12); }
 
-    .controls { display: flex; align-items: center; gap: 14px; margin: 22px 0 8px; flex-wrap: wrap; }
-    button {
-      background: var(--accent); color: #fff; border: 0; border-radius: 10px;
-      padding: 11px 18px; font-size: 15px; font-weight: 700; cursor: pointer;
-    }
-    button:hover { filter: brightness(1.05); }
-    label.auto { color: var(--muted); font-size: 14px; display: flex; align-items: center; gap: 7px; }
-
-    .err {
-      background: rgba(255,93,93,.08); border: 1px solid rgba(255,93,93,.35);
-      color: #ffb3b3; padding: 14px 16px; border-radius: 12px; font-size: 14px;
-      white-space: pre-wrap; word-break: break-word;
-    }
     .fusion { margin-top: 12px; }
-    .fusion summary {
-      cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 700;
-      letter-spacing: .03em;
-    }
+    .fusion summary { cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .03em; }
     .fusion table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
     .fusion th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
     .fusion td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
     .fusion tbody tr:first-child td { color: var(--text); font-weight: 700; }
-    .disclaimer { color: var(--muted); font-size: 12px; margin-top: 26px; line-height: 1.5; }
+
+    .controls { display: flex; align-items: center; gap: 16px; margin: 20px 0 0; flex-wrap: wrap; }
+    button { background: #1c2330; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 16px; font-size: 14px; font-weight: 700; cursor: pointer; }
+    button:hover { border-color: var(--accent); }
+    .err { background: rgba(255,93,93,.08); border: 1px solid rgba(255,93,93,.35); color: #ffb3b3; padding: 14px 16px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; }
+    .disclaimer { color: var(--muted); font-size: 12px; margin-top: 24px; line-height: 1.5; }
     a { color: var(--accent); }
   </style>
 </head>
@@ -92,92 +89,204 @@
       <div class="logo">₿</div>
       <h1>BTC Tracker · Nwachukwu Model</h1>
     </header>
-    <div class="sub">Live price + the <strong>Nwachukwu Model</strong>: Bayesian regression (Shah&nbsp;&amp;&nbsp;Zhang, 2014) blended with Combinatorial Fusion Analysis (Wu&nbsp;et&nbsp;al., IEEE&nbsp;CAI). Recomputed on every refresh.</div>
+    <div class="sub">
+      Live price &amp; chart with the <strong>Nwachukwu Model</strong> — Bayesian regression
+      (Shah&nbsp;&amp;&nbsp;Zhang, 2014) blended with Combinatorial Fusion Analysis (Wu&nbsp;et&nbsp;al., IEEE&nbsp;CAI).
+      Updates automatically every 10&nbsp;seconds.
+    </div>
 
-    {% if a.ok %}
+    <div id="err" class="err" style="display:none;"></div>
+
+    <div class="topbar">
       <div class="spot">
         <div class="k">Current BTC / USD</div>
-        <div class="v">${{ "{:,.2f}".format(a.spot) }}</div>
-        <div class="t">As of {{ a.as_of_utc }}</div>
+        <div class="v" id="spot">—</div>
+        <div class="chg" id="chg">&nbsp;</div>
       </div>
-
-      <div class="grid">
-        {% for f in a.forecasts %}
-        <div class="card">
-          <div class="label">{{ f.label }}</div>
-          <div class="price">${{ "{:,.2f}".format(f.predicted_price) }}</div>
-          <div class="meta">
-            <span class="delta {{ f.direction|lower }}">
-              {{ "{:+,.2f}".format(f.delta) }}
-            </span>
-            <span class="pill {{ f.direction|lower }}">{{ f.direction }}</span>
-          </div>
-          <div class="meta" style="margin-top:8px;">
-            Target {{ f.target_time_utc }}
-            &middot; {{ f.minutes_ahead }} min ahead
-            &middot; {{ f.history_points }} candles
-          </div>
-          <details class="fusion">
-            <summary>CFA fusion · {{ f.combination }}</summary>
-            <table>
-              <thead>
-                <tr><th>Base model</th><th>Predicts</th><th>Diversity</th><th>Weight</th></tr>
-              </thead>
-              <tbody>
-                {% for b in f.base_models %}
-                <tr>
-                  <td>{{ b.name }}</td>
-                  <td>${{ "{:,.0f}".format(b.price) }}</td>
-                  <td>{{ "{:.4f}".format(b.diversity) }}</td>
-                  <td>{{ "{:.4f}".format(b.weight) }}</td>
-                </tr>
-                {% endfor %}
-              </tbody>
-            </table>
-          </details>
-        </div>
-        {% endfor %}
+      <div class="live">
+        <span class="dot" id="livedot"></span>
+        <span id="status">connecting…</span>
       </div>
-    {% else %}
-      <div class="err">Could not compute the forecast.
+    </div>
 
-{{ a.error }}</div>
-    {% endif %}
+    <div class="chartcard">
+      <div class="chartwrap"><canvas id="chart"></canvas></div>
+    </div>
+
+    <div class="grid" id="cards"></div>
 
     <div class="controls">
-      <button onclick="window.location.reload()">⟳ Refresh now</button>
-      <label class="auto">
-        <input type="checkbox" id="auto" /> Auto-refresh every 60s
-      </label>
+      <button id="pause">⏸ Pause live</button>
+      <button onclick="window.location.reload()">⟳ Hard refresh</button>
     </div>
 
     <div class="disclaimer">
       The <strong>Nwachukwu Model</strong> blends the Bayesian-regression estimator of
       Shah &amp; Zhang (2014), <em>"Bayesian Regression and Bitcoin"</em>, with the
       Combinatorial Fusion Analysis (CFA) framework of Wu, Ye, Xu &amp; Hsu,
-      <em>"Bitcoin Price Prediction using Machine Learning and Combinatorial Fusion
-      Analysis"</em> (IEEE CAI). Five diverse base models (Bayesian, momentum,
-      mean-reversion, EMA/MACD, random-walk) each become a scoring system; they are
-      fused by score combination weighted by cognitive-diversity strength, applied live
-      to recent 15-minute and 1-hour candles. <strong>Research and education only — not
-      financial advice.</strong> Modeled performance does not imply live results.
+      <em>"Bitcoin Price Prediction using Machine Learning and Combinatorial Fusion Analysis"</em>
+      (IEEE CAI). Five diverse base models (Bayesian, momentum, mean-reversion, EMA/MACD,
+      random-walk) each become a scoring system; they are fused by score combination weighted
+      by cognitive-diversity strength, applied live to recent 15-minute and 1-hour candles.
+      <strong>Research and education only — not financial advice.</strong>
     </div>
   </div>
 
   <script>
-    // Persist the auto-refresh choice across reloads.
-    const box = document.getElementById('auto');
-    box.checked = localStorage.getItem('btc_auto') === '1';
-    let timer = null;
-    function apply() {
-      if (timer) { clearInterval(timer); timer = null; }
-      if (box.checked) { timer = setInterval(() => window.location.reload(), 60000); }
+    const POLL_MS = 10000;            // live update interval: 10 seconds
+    const fmtUSD = (n) => '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    const fmtUSD0 = (n) => '$' + Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
+    const dirClass = (d) => (d || 'flat').toLowerCase();
+
+    function fmtClock(ts) {
+      const d = new Date(ts * 1000);
+      return d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', hour12: false});
     }
-    box.addEventListener('change', () => {
-      localStorage.setItem('btc_auto', box.checked ? '1' : '0');
-      apply();
+
+    let chart = null;
+    let prevSpot = null;
+    let paused = false;
+    let timer = null;
+
+    function buildChart(payload) {
+      const hist = payload.history || [];
+      const labels = hist.map(h => fmtClock(h.ts));
+      const actual = hist.map(h => h.price);
+      const n = hist.length;
+
+      // Append the two forecast slots.
+      labels.push('+15m', 'Top of hr');
+      const actualData = actual.concat([null, null]);
+
+      const f15 = payload.forecasts[0];
+      const fhour = payload.forecasts[1];
+      const forecastData = new Array(n + 2).fill(null);
+      if (n > 0) forecastData[n - 1] = payload.spot;     // anchor at live price
+      if (f15) forecastData[n] = f15.predicted_price;
+      if (fhour) forecastData[n + 1] = fhour.predicted_price;
+
+      const upTotal = fhour ? (fhour.predicted_price >= payload.spot) : true;
+      const fColor = upTotal ? '#2ecc71' : '#ff5d5d';
+
+      const ctx = document.getElementById('chart').getContext('2d');
+      const data = {
+        labels,
+        datasets: [
+          {
+            label: 'BTC/USD (15m close)',
+            data: actualData,
+            borderColor: '#f7931a',
+            backgroundColor: 'rgba(247,147,26,0.10)',
+            borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true, spanGaps: false,
+          },
+          {
+            label: 'Nwachukwu forecast',
+            data: forecastData,
+            borderColor: fColor,
+            borderDash: [6, 5],
+            borderWidth: 2,
+            pointRadius: (c) => (c.dataIndex >= n ? 4 : 0),
+            pointBackgroundColor: fColor,
+            tension: 0.2, fill: false, spanGaps: true,
+          },
+        ],
+      };
+      const options = {
+        responsive: true, maintainAspectRatio: false, animation: false,
+        interaction: { intersect: false, mode: 'index' },
+        scales: {
+          x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#8b95a7', maxTicksLimit: 8, autoSkip: true } },
+          y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b95a7', callback: (v) => fmtUSD0(v) } },
+        },
+        plugins: {
+          legend: { labels: { color: '#c0c6d0', boxWidth: 14, font: { size: 12 } } },
+          tooltip: { callbacks: { label: (c) => c.parsed.y == null ? '' : c.dataset.label + ': ' + fmtUSD(c.parsed.y) } },
+        },
+      };
+      if (chart) { chart.data = data; chart.options = options; chart.update('none'); }
+      else { chart = new Chart(ctx, { type: 'line', data, options }); }
+    }
+
+    function renderCards(payload) {
+      const wrap = document.getElementById('cards');
+      wrap.innerHTML = '';
+      for (const f of payload.forecasts) {
+        const dc = dirClass(f.direction);
+        const rows = (f.base_models || []).map(b =>
+          `<tr><td>${b.name}</td><td>${fmtUSD0(b.price)}</td><td>${Number(b.diversity).toFixed(4)}</td><td>${Number(b.weight).toFixed(4)}</td></tr>`
+        ).join('');
+        wrap.insertAdjacentHTML('beforeend', `
+          <div class="card">
+            <div class="label">${f.label}</div>
+            <div class="price">${fmtUSD(f.predicted_price)}</div>
+            <div class="meta">
+              <span class="delta ${dc}">${(f.delta>=0?'+':'')}${Number(f.delta).toLocaleString('en-US',{maximumFractionDigits:2})}</span>
+              <span class="pill ${dc}">${f.direction}</span>
+            </div>
+            <div class="meta" style="margin-top:8px;">Target ${f.target_time_utc} · ${f.minutes_ahead} min ahead · ${f.history_points} candles</div>
+            <details class="fusion">
+              <summary>CFA fusion · ${f.combination}</summary>
+              <table>
+                <thead><tr><th>Base model</th><th>Predicts</th><th>Diversity</th><th>Weight</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>
+            </details>
+          </div>`);
+      }
+    }
+
+    function render(payload) {
+      const err = document.getElementById('err');
+      if (!payload.ok) {
+        err.style.display = 'block';
+        err.textContent = 'Could not compute the forecast.\n\n' + (payload.error || 'unknown error');
+        document.getElementById('status').textContent = 'error';
+        return;
+      }
+      err.style.display = 'none';
+
+      const spotEl = document.getElementById('spot');
+      spotEl.textContent = fmtUSD(payload.spot);
+      const chg = document.getElementById('chg');
+      if (prevSpot != null) {
+        const d = payload.spot - prevSpot;
+        if (Math.abs(d) >= 0.005) {
+          chg.className = 'chg ' + (d > 0 ? 'up' : 'down');
+          chg.textContent = (d > 0 ? '▲ +' : '▼ ') + Math.abs(d).toLocaleString('en-US',{maximumFractionDigits:2}) + ' since last tick';
+        }
+      }
+      prevSpot = payload.spot;
+
+      buildChart(payload);
+      renderCards(payload);
+      document.getElementById('status').textContent = 'live · updated ' + new Date().toLocaleTimeString('en-US', {hour12:false});
+    }
+
+    async function poll() {
+      if (paused) return;
+      try {
+        const r = await fetch('/api/live', { cache: 'no-store' });
+        render(await r.json());
+      } catch (e) {
+        document.getElementById('status').textContent = 'reconnecting…';
+      }
+    }
+
+    function start() { stop(); timer = setInterval(poll, POLL_MS); }
+    function stop() { if (timer) { clearInterval(timer); timer = null; } }
+
+    document.getElementById('pause').addEventListener('click', (e) => {
+      paused = !paused;
+      document.getElementById('livedot').classList.toggle('paused', paused);
+      e.target.textContent = paused ? '▶ Resume live' : '⏸ Pause live';
+      document.getElementById('status').textContent = paused ? 'paused' : 'live';
+      if (!paused) { poll(); start(); }
     });
-    apply();
+
+    // Paint instantly from the server-embedded payload, then go live.
+    const INITIAL = {{ initial_json|safe }};
+    render(INITIAL);
+    start();
   </script>
 </body>
 </html>

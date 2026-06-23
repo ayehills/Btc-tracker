@@ -70,8 +70,8 @@ def fetch_spot() -> float:
         return float(r.json()["data"]["amount"])
 
 
-def fetch_closes(interval_min: int) -> np.ndarray:
-    """Ascending array of candle close prices for the given interval (minutes).
+def fetch_candle_series(interval_min: int) -> tuple[np.ndarray, np.ndarray]:
+    """Ascending (timestamps_seconds, close_prices) for the given interval.
 
     Uses Kraken's public OHLC endpoint, which returns up to ~720 candles.
     """
@@ -89,8 +89,14 @@ def fetch_closes(interval_min: int) -> np.ndarray:
     # The series lives under the pair key; "last" is also present, skip it.
     series = next(v for k, v in result.items() if k != "last")
     # Each row: [time, open, high, low, close, vwap, volume, count]
+    times = np.array([int(row[0]) for row in series], dtype=np.int64)
     closes = np.array([float(row[4]) for row in series], dtype=np.float64)
-    return closes
+    return times, closes
+
+
+def fetch_closes(interval_min: int) -> np.ndarray:
+    """Ascending array of candle close prices for the given interval (minutes)."""
+    return fetch_candle_series(interval_min)[1]
 
 
 # --------------------------------------------------------------------------
@@ -279,3 +285,68 @@ def get_analysis() -> Analysis:
             forecasts=[],
             error=f"{type(exc).__name__}: {exc}",
         )
+
+
+# --------------------------------------------------------------------------
+# Live payload (price history for charting + spot + forecasts)
+# --------------------------------------------------------------------------
+
+# Recent 15m candle history is cached briefly so frequent polls don't hammer
+# the candle API; the live spot is always fetched fresh by get_analysis.
+_history_cache: dict[int, tuple[float, list]] = {}
+_history_lock = threading.Lock()
+HISTORY_TTL = 30.0
+
+
+def get_history(interval_min: int = 15, limit: int = 96) -> list:
+    """Recent candle history as ``[{"t": iso, "ts": secs, "price": close}, ...]``."""
+    with _history_lock:
+        cached = _history_cache.get(interval_min)
+        if cached and (time.time() - cached[0]) < HISTORY_TTL:
+            return cached[1][-limit:]
+        times, closes = fetch_candle_series(interval_min)
+        rows = [
+            {
+                "ts": int(t),
+                "t": datetime.fromtimestamp(int(t), tz=timezone.utc).isoformat(),
+                "price": float(c),
+            }
+            for t, c in zip(times, closes)
+        ]
+        _history_cache[interval_min] = (time.time(), rows)
+        return rows[-limit:]
+
+
+def get_live(history_interval: int = 15, history_limit: int = 96) -> dict:
+    """One JSON-serializable bundle: spot, forecasts, and recent price history.
+
+    This is what the live (auto-updating) front-end polls.
+    """
+    a = get_analysis()
+    payload = {
+        "ok": a.ok,
+        "spot": a.spot,
+        "as_of_utc": a.as_of_utc,
+        "error": a.error,
+        "forecasts": [
+            {
+                "label": f.label,
+                "target_time_utc": f.target_time_utc,
+                "minutes_ahead": f.minutes_ahead,
+                "predicted_price": f.predicted_price,
+                "delta": f.delta,
+                "direction": f.direction,
+                "history_points": f.history_points,
+                "combination": f.combination,
+                "base_models": f.base_models or [],
+            }
+            for f in a.forecasts
+        ],
+        "history": [],
+    }
+    if a.ok:
+        try:
+            payload["history"] = get_history(history_interval, history_limit)
+        except Exception as exc:
+            payload["history_error"] = f"{type(exc).__name__}: {exc}"
+    return payload

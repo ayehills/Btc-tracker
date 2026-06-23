@@ -18,43 +18,27 @@ Research and education only. Not financial advice.
 
 from __future__ import annotations
 
+import json
+
 from flask import Flask, jsonify, render_template
 
-from predictor_service import get_analysis
+from predictor_service import get_live
 
 app = Flask(__name__)
 
 
 @app.route("/")
 def index():
-    analysis = get_analysis()
-    return render_template("index.html", a=analysis)
+    # Embed an initial payload so the page paints instantly, then the page
+    # keeps itself live by polling /api/live on an interval.
+    initial = get_live()
+    return render_template("index.html", initial_json=json.dumps(initial))
 
 
-@app.route("/api/analysis")
-def api_analysis():
-    """JSON version of the same analysis (handy for the auto-refresh toggle)."""
-    a = get_analysis()
-    return jsonify(
-        {
-            "ok": a.ok,
-            "spot": a.spot,
-            "as_of_utc": a.as_of_utc,
-            "error": a.error,
-            "forecasts": [
-                {
-                    "label": f.label,
-                    "target_time_utc": f.target_time_utc,
-                    "minutes_ahead": f.minutes_ahead,
-                    "predicted_price": f.predicted_price,
-                    "delta": f.delta,
-                    "direction": f.direction,
-                    "history_points": f.history_points,
-                }
-                for f in a.forecasts
-            ],
-        }
-    )
+@app.route("/api/live")
+def api_live():
+    """Live bundle the front-end polls: spot price, forecasts, price history."""
+    return jsonify(get_live())
 
 
 if __name__ == "__main__":
