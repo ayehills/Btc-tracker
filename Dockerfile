@@ -1,15 +1,17 @@
-FROM python:3.12.13 AS builder
+FROM python:3.11-slim
 
-ENV PYTHONUNBUFFERED=1 \
-    PYTHONDONTWRITEBYTECODE=1
 WORKDIR /app
 
+# scipy / scikit-learn ship manylinux wheels, so no compiler toolchain needed.
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-RUN python -m venv .venv
-COPY requirements.txt ./
-RUN .venv/bin/pip install -r requirements.txt
-FROM python:3.12.13-slim
-WORKDIR /app
-COPY --from=builder /app/.venv .venv/
 COPY . .
-CMD ["/app/.venv/bin/flask", "run", "--host=0.0.0.0", "--port=8080"]
+
+ENV PORT=8080
+EXPOSE 8080
+
+# Production WSGI server (not `flask run`). Shell form so $PORT expands. One
+# worker fits the VM; two threads keep the live price endpoint responsive while
+# a model fit is in progress.
+CMD gunicorn app:app --bind 0.0.0.0:${PORT:-8080} --workers 1 --threads 2 --timeout 120

@@ -1,5 +1,10 @@
-fly.toml
 .git/
+fly.toml
 __pycache__/
+*.pyc
+*.log
+.env
 .envrc
 .venv/
+venv/
+data/prices.csv
