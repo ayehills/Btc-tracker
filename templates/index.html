@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>BTC Tracker — Nwachukwu Model</title>
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --card: #151a23;
+      --line: #232a36;
+      --text: #e6e9ef;
+      --muted: #8b95a7;
+      --up: #2ecc71;
+      --down: #ff5d5d;
+      --flat: #c0c6d0;
+      --accent: #f7931a; /* bitcoin orange */
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      min-height: 100vh; display: flex; align-items: flex-start; justify-content: center;
+    }
+    .wrap { width: 100%; max-width: 760px; padding: 28px 18px 60px; }
+    header { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }
+    .logo {
+      width: 34px; height: 34px; border-radius: 50%; background: var(--accent);
+      color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center;
+    }
+    h1 { font-size: 20px; margin: 0; font-weight: 700; }
+    .sub { color: var(--muted); font-size: 13px; margin: 2px 0 22px; }
+
+    .spot {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
+      padding: 22px 24px; margin-bottom: 18px;
+    }
+    .spot .k { color: var(--muted); font-size: 13px; letter-spacing: .04em; text-transform: uppercase; }
+    .spot .v { font-size: 44px; font-weight: 800; margin-top: 4px; }
+    .spot .t { color: var(--muted); font-size: 12px; margin-top: 8px; }
+
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } }
+
+    .card {
+      background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px;
+    }
+    .card .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .card .price { font-size: 30px; font-weight: 800; margin: 8px 0 2px; }
+    .card .meta { font-size: 13px; color: var(--muted); }
+    .delta { font-weight: 700; }
+    .up { color: var(--up); }
+    .down { color: var(--down); }
+    .flat { color: var(--flat); }
+    .pill {
+      display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px;
+      border-radius: 999px; margin-left: 8px;
+    }
+    .pill.up { background: rgba(46,204,113,.12); }
+    .pill.down { background: rgba(255,93,93,.12); }
+    .pill.flat { background: rgba(192,198,208,.12); }
+
+    .controls { display: flex; align-items: center; gap: 14px; margin: 22px 0 8px; flex-wrap: wrap; }
+    button {
+      background: var(--accent); color: #fff; border: 0; border-radius: 10px;
+      padding: 11px 18px; font-size: 15px; font-weight: 700; cursor: pointer;
+    }
+    button:hover { filter: brightness(1.05); }
+    label.auto { color: var(--muted); font-size: 14px; display: flex; align-items: center; gap: 7px; }
+
+    .err {
+      background: rgba(255,93,93,.08); border: 1px solid rgba(255,93,93,.35);
+      color: #ffb3b3; padding: 14px 16px; border-radius: 12px; font-size: 14px;
+      white-space: pre-wrap; word-break: break-word;
+    }
+    .fusion { margin-top: 12px; }
+    .fusion summary {
+      cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 700;
+      letter-spacing: .03em;
+    }
+    .fusion table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
+    .fusion th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+    .fusion td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
+    .fusion tbody tr:first-child td { color: var(--text); font-weight: 700; }
+    .disclaimer { color: var(--muted); font-size: 12px; margin-top: 26px; line-height: 1.5; }
+    a { color: var(--accent); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">₿</div>
+      <h1>BTC Tracker · Nwachukwu Model</h1>
+    </header>
+    <div class="sub">Live price + the <strong>Nwachukwu Model</strong>: Bayesian regression (Shah&nbsp;&amp;&nbsp;Zhang, 2014) blended with Combinatorial Fusion Analysis (Wu&nbsp;et&nbsp;al., IEEE&nbsp;CAI). Recomputed on every refresh.</div>
+
+    {% if a.ok %}
+      <div class="spot">
+        <div class="k">Current BTC / USD</div>
+        <div class="v">${{ "{:,.2f}".format(a.spot) }}</div>
+        <div class="t">As of {{ a.as_of_utc }}</div>
+      </div>
+
+      <div class="grid">
+        {% for f in a.forecasts %}
+        <div class="card">
+          <div class="label">{{ f.label }}</div>
+          <div class="price">${{ "{:,.2f}".format(f.predicted_price) }}</div>
+          <div class="meta">
+            <span class="delta {{ f.direction|lower }}">
+              {{ "{:+,.2f}".format(f.delta) }}
+            </span>
+            <span class="pill {{ f.direction|lower }}">{{ f.direction }}</span>
+          </div>
+          <div class="meta" style="margin-top:8px;">
+            Target {{ f.target_time_utc }}
+            &middot; {{ f.minutes_ahead }} min ahead
+            &middot; {{ f.history_points }} candles
+          </div>
+          <details class="fusion">
+            <summary>CFA fusion · {{ f.combination }}</summary>
+            <table>
+              <thead>
+                <tr><th>Base model</th><th>Predicts</th><th>Diversity</th><th>Weight</th></tr>
+              </thead>
+              <tbody>
+                {% for b in f.base_models %}
+                <tr>
+                  <td>{{ b.name }}</td>
+                  <td>${{ "{:,.0f}".format(b.price) }}</td>
+                  <td>{{ "{:.4f}".format(b.diversity) }}</td>
+                  <td>{{ "{:.4f}".format(b.weight) }}</td>
+                </tr>
+                {% endfor %}
+              </tbody>
+            </table>
+          </details>
+        </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="err">Could not compute the forecast.
+
+{{ a.error }}</div>
+    {% endif %}
+
+    <div class="controls">
+      <button onclick="window.location.reload()">⟳ Refresh now</button>
+      <label class="auto">
+        <input type="checkbox" id="auto" /> Auto-refresh every 60s
+      </label>
+    </div>
+
+    <div class="disclaimer">
+      The <strong>Nwachukwu Model</strong> blends the Bayesian-regression estimator of
+      Shah &amp; Zhang (2014), <em>"Bayesian Regression and Bitcoin"</em>, with the
+      Combinatorial Fusion Analysis (CFA) framework of Wu, Ye, Xu &amp; Hsu,
+      <em>"Bitcoin Price Prediction using Machine Learning and Combinatorial Fusion
+      Analysis"</em> (IEEE CAI). Five diverse base models (Bayesian, momentum,
+      mean-reversion, EMA/MACD, random-walk) each become a scoring system; they are
+      fused by score combination weighted by cognitive-diversity strength, applied live
+      to recent 15-minute and 1-hour candles. <strong>Research and education only — not
+      financial advice.</strong> Modeled performance does not imply live results.
+    </div>
+  </div>
+
+  <script>
+    // Persist the auto-refresh choice across reloads.
+    const box = document.getElementById('auto');
+    box.checked = localStorage.getItem('btc_auto') === '1';
+    let timer = null;
+    function apply() {
+      if (timer) { clearInterval(timer); timer = null; }
+      if (box.checked) { timer = setInterval(() => window.location.reload(), 60000); }
+    }
+    box.addEventListener('change', () => {
+      localStorage.setItem('btc_auto', box.checked ? '1' : '0');
+      apply();
+    });
+    apply();
+  </script>
+</body>
+</html>
