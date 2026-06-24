@@ -47,7 +47,13 @@
     th{text-align:left;color:var(--muted);font-weight:600;padding:5px 6px;border-bottom:1px solid var(--line)}
     td{padding:5px 6px;border-bottom:1px solid var(--line)}
     td.r,th.r{text-align:right}
-    .chartwrap{position:relative;height:300px}
+    .chartwrap{position:relative;height:320px}
+    .tfbtns button{background:#1c2330;color:var(--muted);border:1px solid var(--line);border-radius:8px;padding:4px 10px;font-size:12px;font-weight:700;cursor:pointer;margin-left:4px}
+    .tfbtns button.on{color:#fff;border-color:var(--accent);background:rgba(247,147,26,.15)}
+    .scen{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+    .scenbox{background:#11161f;border:1px solid var(--line);border-radius:10px;padding:8px 10px}
+    .scenbox .h{font-size:11px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em;margin-bottom:4px}
+    .scenrow{display:flex;justify-content:space-between;font-size:12.5px;padding:1px 0}
     details summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:700;margin-top:6px}
     .foot{color:var(--muted);font-size:12px;margin-top:22px;line-height:1.55}
     a{color:var(--accent)}
@@ -146,8 +152,15 @@
 
       <!-- chart -->
       <div class="card">
-        <div class="label" id="chartlabel">Price · last 24h (1-minute)</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+          <div class="label" id="chartlabel">Price + projection</div>
+          <div class="tfbtns" id="tfbtns">
+            <button data-tf="15">15m</button><button data-tf="60" class="on">1h</button><button data-tf="360">6h</button><button data-tf="1440">24h</button>
+          </div>
+        </div>
         <div class="chartwrap"><canvas id="chart"></canvas></div>
+        <div class="muted" id="lastmin" style="font-size:12px;margin-top:8px"></div>
+        <div id="scenarios" style="margin-top:6px"></div>
       </div>
 
       <div class="foot">
@@ -175,6 +188,9 @@
 
     let closes=[], volumes=[], times=[], chart=null;
     let c15=[], t15=[], c60=[], t60=[];   // 15-minute and hourly candle closes
+    let tfMin=60;                          // chart zoom window (minutes of history)
+    let spotBuf=[];                        // rolling {t(ms),p} for last-minute jump detection
+    let proj=null;                         // latest projection inputs for the chart
 
     async function jget(url){ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(url+' '+r.status); return r.json(); }
 
@@ -297,6 +313,7 @@
       at.insertAdjacentHTML('beforeend',`<tr><td>Top Cap (ceiling)</td><td class="r">${usd0(tc.top_price)}</td><td class="r muted">avg cap ×35</td></tr>`);
       at.insertAdjacentHTML('beforeend',`<tr><td><b>Umeh fair value</b></td><td class="r"><b>${usd0(res.umeh_fair_value)}</b></td><td class="r muted">weighted blend</td></tr>`);
 
+      window.__lastRes=res;
       drawChart(res);
     }
 
@@ -314,25 +331,85 @@
       });
     }
 
+    // Per-minute volatility from recent 1m closes.
+    function vol1m(){
+      const n=Math.min(31, closes.length); if(n<3) return 1;
+      const seg=closes.slice(-n); let s=0,m=0;
+      for(let i=1;i<seg.length;i++){const d=seg[i]-seg[i-1]; m+=d;} m/=(seg.length-1);
+      for(let i=1;i<seg.length;i++){const d=seg[i]-seg[i-1]-m; s+=d*d;}
+      return Math.sqrt(s/(seg.length-1))||1;
+    }
+    // Per-minute velocity from the last ~60s of spot samples (catches intra-minute jumps).
+    function lastMinuteVelocity(){
+      const now=Date.now(); const recent=spotBuf.filter(x=>now-x.t<=70000);
+      if(recent.length<2) return 0;
+      const a=recent[0], b=recent[recent.length-1];
+      const dtMin=Math.max((b.t-a.t)/60000, 1/60);
+      return (b.p-a.p)/dtMin;   // $/minute
+    }
+
+    // Zoomed price chart with a forward projection fan (bull / base / bear).
     function drawChart(res){
-      // last 24h of 1m for detail
-      const N=Math.min(1440, closes.length);
+      const N=Math.min(tfMin, closes.length);
       const cl=closes.slice(-N), tm=times.slice(-N);
-      const labels=tm.map(t=>{const d=new Date(t*1000);return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});});
-      labels.push('+2m');
-      const series=cl.concat([null]);
-      const fc=new Array(N+1).fill(null); fc[N-1]=res.spot; fc[N]=res.short_term_price;
+      const now=new Date();
+      const H=60;                                  // project 60 minutes ahead
+      const vol=vol1m(), vel=proj?proj.vel:0;
+      // model anchors (minutes ahead -> price)
+      const A=[[0,res.spot],[2,res.short_term_price]];
+      if(proj&&proj.p15!=null) A.push([15,proj.p15]);
+      if(proj&&proj.p60!=null) A.push([60,proj.p60]);
+      A.sort((x,y)=>x[0]-y[0]);
+      const interp=m=>{ // piecewise-linear through anchors
+        for(let i=1;i<A.length;i++){ if(m<=A[i][0]){ const [m0,p0]=A[i-1],[m1,p1]=A[i]; return p0+(p1-p0)*(m-m0)/Math.max(m1-m0,1e-9);}}
+        return A[A.length-1][1];
+      };
+      // labels: past clock times + future clock times
+      const labels=tm.map(t=>new Date(t*1000).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false}));
+      for(let m=1;m<=H;m++) labels.push(new Date(now.getTime()+m*60000).toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false}));
+
+      const past=cl.concat(new Array(H).fill(null));
+      const base=new Array(N+H).fill(null), bull=new Array(N+H).fill(null), bear=new Array(N+H).fill(null);
+      base[N-1]=bull[N-1]=bear[N-1]=res.spot;      // anchor the fan at the live price
+      for(let m=1;m<=H;m++){
+        const center=interp(m) + vel*Math.min(m,3)*0.5;   // last-minute jump bends the near path
+        const band=vol*Math.sqrt(m)*1.5;
+        base[N-1+m]=center; bull[N-1+m]=center+band; bear[N-1+m]=center-band;
+      }
+      const upColor=res.short_term_delta>=0?'#2ecc71':'#ff5d5d';
       const data={labels,datasets:[
-        {label:'BTC/USD (1m)',data:series,borderColor:'#f7931a',backgroundColor:'rgba(247,147,26,.10)',borderWidth:2,pointRadius:0,tension:.25,fill:true},
-        {label:'Umeh forecast',data:fc,borderColor:res.short_term_delta>=0?'#2ecc71':'#ff5d5d',borderDash:[6,5],borderWidth:2,pointRadius:c=>c.dataIndex>=N-1?4:0,tension:.2,spanGaps:true},
+        {label:'BTC/USD (1m)',data:past,borderColor:'#f7931a',backgroundColor:'rgba(247,147,26,.08)',borderWidth:2,pointRadius:0,tension:.25,fill:true},
+        {label:'Bull',data:bull,borderColor:'rgba(46,204,113,.45)',borderWidth:1,borderDash:[3,3],pointRadius:0,fill:'+1',backgroundColor:'rgba(120,160,255,.10)',tension:.2,spanGaps:true},
+        {label:'Bear',data:bear,borderColor:'rgba(255,93,93,.45)',borderWidth:1,borderDash:[3,3],pointRadius:0,fill:false,tension:.2,spanGaps:true},
+        {label:'Projection',data:base,borderColor:upColor,borderWidth:2,borderDash:[6,4],pointRadius:c=>[N-1+2,N-1+15,N-1+60].includes(c.dataIndex)?3:0,tension:.2,spanGaps:true},
       ]};
       const opts={responsive:true,maintainAspectRatio:false,animation:false,
-        scales:{x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'#8b95a7',maxTicksLimit:7,autoSkip:true}},
+        scales:{x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'#8b95a7',maxTicksLimit:8,autoSkip:true}},
                 y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#8b95a7',callback:v=>usd0(v)}}},
-        plugins:{legend:{labels:{color:'#c0c6d0',boxWidth:14,font:{size:12}}},
+        plugins:{legend:{labels:{color:'#c0c6d0',boxWidth:12,font:{size:11}}},
                  tooltip:{callbacks:{label:c=>c.parsed.y==null?'':c.dataset.label+': '+usd(c.parsed.y)}}}};
       if(chart){chart.data=data;chart.options=opts;chart.update('none');}
       else chart=new Chart(document.getElementById('chart').getContext('2d'),{type:'line',data,options:opts});
+    }
+
+    // Numeric multi-scenario readout + last-minute jump indicator.
+    function renderScenarios(res){
+      const vol=vol1m(), vel=proj?proj.vel:0;
+      const lm=document.getElementById('lastmin');
+      const jump=Math.abs(vel)>2*vol && Math.abs(vel)>1;
+      lm.innerHTML = `Last 60s: <span class="${vel>=0?'up':'down'}">${vel>=0?'+':''}${vel.toFixed(2)}/min</span>`
+        + (jump?` &nbsp;⚡ <b class="${vel>=0?'up':'down'}">jump detected</b> — near-term path tilted ${vel>=0?'up':'down'}`:'');
+      const scen=(label, m, pBase)=>{
+        const band=vol*Math.sqrt(m)*1.5 + Math.abs(vel)*Math.min(m,3)*0.5;
+        return `<div class="scenbox"><div class="h">${label}</div>`
+          +`<div class="scenrow"><span class="up">Bull</span><span>${usd(pBase+band)}</span></div>`
+          +`<div class="scenrow"><span>Base</span><span>${usd(pBase)}</span></div>`
+          +`<div class="scenrow"><span class="down">Bear</span><span>${usd(pBase-band)}</span></div></div>`;
+      };
+      const p15 = proj&&proj.p15!=null?proj.p15:res.short_term_price;
+      const p60 = proj&&proj.p60!=null?proj.p60:res.short_term_price;
+      document.getElementById('scenarios').innerHTML =
+        `<div class="scen">${scen('In 15 min',15,p15)}${scen('Top of hour',60,p60)}</div>`;
     }
 
     async function tick(){
@@ -341,13 +418,15 @@
         const [spot, r] = await Promise.all([fetchSpot(), fetchOrderFlow()]);
         const now=new Date();
 
-        // 1-2 min thrust + Umeh composite
-        const res = Umeh.computeUmeh(closes, volumes, spot, r, Date.now());
-        render(res);
+        // rolling spot buffer for last-minute jump detection
+        spotBuf.push({t:Date.now(), p:spot});
+        spotBuf=spotBuf.filter(x=>Date.now()-x.t<=120000);
+        proj={vel:lastMinuteVelocity(), p15:null, p60:null};
 
         // 15-minute mark (next clock quarter) — price-pattern roster
         if(c15.length>40){
           const f15 = Umeh.nwachukwuSlow(c15, spot);
+          proj.p15=f15.predicted_price;
           renderForecast({price:'f15price',pill:'f15pill',label:'f15label',meta:'f15meta',tbl:'f15tbl'},
             f15, spot, 'Next 15-min mark ('+hhmmUTC(nextQuarter(now)).slice(0,5)+')', nextQuarter(now));
         }
@@ -358,12 +437,26 @@
           const scale=Math.max(0,Math.min(1,minsLeft/60));
           const f60={predicted_price:spot+f60raw.delta*scale, delta:f60raw.delta*scale,
                      direction:(f60raw.delta*scale)>=0?'UP':'DOWN', base_means:f60raw.base_means, base_weights:f60raw.base_weights};
+          proj.p60=f60.predicted_price;
           renderForecast({price:'f60price',pill:'f60pill',label:'f60label',meta:'f60meta',tbl:'f60tbl'},
             f60, spot, 'Top of the hour', toh);
         }
+
+        // 1-2 min thrust + Umeh composite + projection fan (uses proj.*)
+        const res = Umeh.computeUmeh(closes, volumes, spot, r, Date.now());
+        render(res);
+        renderScenarios(res);
         document.getElementById('livetxt').textContent='live';
       }catch(e){ document.getElementById('livetxt').textContent='reconnecting…'; }
     }
+
+    // Timeframe zoom buttons.
+    document.getElementById('tfbtns').addEventListener('click', e=>{
+      const b=e.target.closest('button'); if(!b) return;
+      tfMin=parseInt(b.dataset.tf,10);
+      [...document.querySelectorAll('#tfbtns button')].forEach(x=>x.classList.toggle('on', x===b));
+      if(window.__lastRes) drawChart(window.__lastRes);
+    });
 
     (async function(){
       try{
