@@ -352,6 +352,46 @@ def _direction(delta: float) -> str:
     return "UP" if delta > 0 else "DOWN" if delta < 0 else "FLAT"
 
 
+# --------------------------------------------------------------------------
+# Slow-horizon Nwachukwu forecast (15-minute / hourly): price-pattern roster.
+# Backtests showed the fast thrust/volume models add noise at slower horizons,
+# so these use the original price-only roster (no order flow).
+# --------------------------------------------------------------------------
+
+def base_model_predictions_slow(closes: np.ndarray) -> Dict[str, float]:
+    last = float(closes[-1])
+    out: Dict[str, float] = {}
+    out["Bayesian"] = kernel_bayesian_price(closes)
+    out["Momentum"] = last + float(np.mean(np.diff(closes[-11:]))) if len(closes) > 11 else last
+    n = min(20, len(closes))
+    out["MeanRev"] = last + 0.25 * (float(np.mean(closes[-n:])) - last)
+    if len(closes) > 35:
+        macd = _ema(closes.astype(float), 12) - _ema(closes.astype(float), 26)
+        signal = _ema(macd, 9)
+        out["EMA_MACD"] = last + float(macd[-1] - signal[-1])
+    else:
+        out["EMA_MACD"] = last
+    out["RandomWalk"] = last
+    return out
+
+
+def nwachukwu_slow(closes: np.ndarray, spot: float) -> Dict[str, object]:
+    """Fuse the price-pattern roster for one slow-horizon next-candle forecast."""
+    closes = np.asarray(closes, dtype=float).ravel()
+    series = np.append(closes, float(spot)) if spot and math.isfinite(spot) else closes
+    preds = base_model_predictions_slow(series)
+    fused = cfa_fuse(preds, series)
+    delta = fused["predicted_price"] - float(spot)
+    return {
+        "predicted_price": float(fused["predicted_price"]),
+        "delta": float(delta),
+        "direction": _direction(delta),
+        "base_means": fused["means"],
+        "base_weights": fused["weights"],
+    }
+
+
+
 def compute_umeh(closes: np.ndarray, volumes: Optional[np.ndarray], spot: float,
                  order_flow_r: float = 0.0,
                  now: Optional[datetime] = None) -> UmehResult:

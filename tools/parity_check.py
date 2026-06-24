@@ -44,6 +44,7 @@ def main():
     closes, volumes, spot, r, now, now_ms = build_snapshot()
 
     py = um.compute_umeh(closes, volumes, spot, r, now=now)
+    py_slow = um.nwachukwu_slow(closes, spot)
 
     snap = {
         "closes": closes.tolist(),
@@ -75,6 +76,8 @@ def main():
         ("umeh_fair_value", py.umeh_fair_value, js["umeh_fair_value"]),
         ("pl_band_position", py.pl_band_position, js["pl_band_position"]),
         ("umeh_score", py.umeh_score, js["umeh_score"]),
+        ("slow.predicted_price", py_slow["predicted_price"], js["slow"]["predicted_price"]),
+        ("slow.delta", py_slow["delta"], js["slow"]["delta"]),
     ]
 
     print(f"{'field':22s} {'python':>16s} {'javascript':>16s}  status")

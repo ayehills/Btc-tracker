@@ -8,5 +8,6 @@ process.stdin.on('data', d => (buf += d));
 process.stdin.on('end', () => {
   const s = JSON.parse(buf);
   const res = Umeh.computeUmeh(s.closes, s.volumes, s.spot, s.order_flow_r, s.now_ms);
+  res.slow = Umeh.nwachukwuSlow(s.closes, s.spot);
   process.stdout.write(JSON.stringify(res));
 });

@@ -242,6 +242,36 @@
 
   function direction(d) { return d > 0 ? 'UP' : d < 0 ? 'DOWN' : 'FLAT'; }
 
+  // Slow-horizon roster (15-minute / hourly): price-pattern only, no thrust/flow.
+  function baseModelPredictionsSlow(closes) {
+    const lp = last(closes);
+    const out = {};
+    out.Bayesian = kernelBayesianPrice(closes);
+    out.Momentum = closes.length > 11 ? lp + mean(diff(slice(closes, closes.length - 11, closes.length))) : lp;
+    const n = Math.min(20, closes.length);
+    out.MeanRev = lp + 0.25 * (mean(slice(closes, closes.length - n, closes.length)) - lp);
+    if (closes.length > 35) {
+      const e12 = ema(closes, 12), e26 = ema(closes, 26);
+      const macd = e12.map((v, i) => v - e26[i]);
+      const signal = ema(macd, 9);
+      out.EMA_MACD = lp + (last(macd) - last(signal));
+    } else out.EMA_MACD = lp;
+    out.RandomWalk = lp;
+    return out;
+  }
+
+  function nwachukwuSlow(closes, spot) {
+    closes = closes.map(Number);
+    const series = (spot && isFinite(spot)) ? closes.concat([Number(spot)]) : closes;
+    const preds = baseModelPredictionsSlow(series);
+    const fused = cfaFuse(preds, series);
+    const delta = fused.predicted_price - Number(spot);
+    return {
+      predicted_price: fused.predicted_price, delta, direction: direction(delta),
+      base_means: fused.means, base_weights: fused.weights,
+    };
+  }
+
   // ---- The Umeh formula ----
   function computeUmeh(closes, volumes, spot, orderFlowR, nowMs) {
     orderFlowR = orderFlowR || 0.0;
@@ -298,6 +328,7 @@
   const api = {
     computeUmeh, powerLaw, supplyAndFlow, stockToFlow, topCap,
     kernelBayesianPrice, baseModelPredictions, cfaFuse, daysSinceGenesis,
+    nwachukwuSlow, baseModelPredictionsSlow,
   };
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
   root.Umeh = api;

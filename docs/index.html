@@ -25,6 +25,8 @@
     @keyframes p{0%{box-shadow:0 0 0 0 rgba(46,204,113,.55)}70%{box-shadow:0 0 0 8px rgba(46,204,113,0)}100%{box-shadow:0 0 0 0 rgba(46,204,113,0)}}
     .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-top:14px}
     .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+    @media(max-width:760px){.grid3{grid-template-columns:1fr}}
     @media(max-width:620px){.grid2{grid-template-columns:1fr}.spot .v{font-size:34px}}
     .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
     .big{font-size:30px;font-weight:800;margin:6px 0 2px}
@@ -88,30 +90,49 @@
         <div class="muted" id="scorenote" style="font-size:12.5px;margin-top:8px"></div>
       </div>
 
-      <div class="grid2">
-        <!-- short term -->
+      <!-- multi-horizon Nwachukwu forecasts -->
+      <div class="grid3">
         <div class="card">
-          <div class="label">Nwachukwu · next 1–2 min</div>
+          <div class="label">Next 1–2 min (thrust)</div>
           <div class="big"><span id="stprice">—</span> <span class="pill" id="stpill"></span></div>
           <div class="muted" id="stmeta" style="font-size:12.5px"></div>
           <details><summary>CFA base models</summary>
-            <table><thead><tr><th>Model</th><th class="r">Predicts</th><th class="r">Weight</th></tr></thead>
+            <table><thead><tr><th>Model</th><th class="r">Predicts</th><th class="r">Wt</th></tr></thead>
               <tbody id="basetbl"></tbody></table>
           </details>
         </div>
-        <!-- valuation context -->
         <div class="card">
-          <div class="label">Where price sits (Power-Law band)</div>
-          <div class="band" id="band"></div>
-          <table>
-            <tbody>
-              <tr><td>Power-law fair (center)</td><td class="r" id="plc">—</td></tr>
-              <tr><td>Price vs fair</td><td class="r" id="pvf">—</td></tr>
-              <tr><td>Umeh fair value</td><td class="r" id="umfair">—</td></tr>
-              <tr><td>Headroom to Top&nbsp;Cap</td><td class="r" id="head">—</td></tr>
-            </tbody>
-          </table>
+          <div class="label" id="f15label">Next 15-min mark</div>
+          <div class="big"><span id="f15price">—</span> <span class="pill" id="f15pill"></span></div>
+          <div class="muted" id="f15meta" style="font-size:12.5px"></div>
+          <details><summary>CFA base models</summary>
+            <table><thead><tr><th>Model</th><th class="r">Predicts</th><th class="r">Wt</th></tr></thead>
+              <tbody id="f15tbl"></tbody></table>
+          </details>
         </div>
+        <div class="card">
+          <div class="label" id="f60label">Top of the hour</div>
+          <div class="big"><span id="f60price">—</span> <span class="pill" id="f60pill"></span></div>
+          <div class="muted" id="f60meta" style="font-size:12.5px"></div>
+          <details><summary>CFA base models</summary>
+            <table><thead><tr><th>Model</th><th class="r">Predicts</th><th class="r">Wt</th></tr></thead>
+              <tbody id="f60tbl"></tbody></table>
+          </details>
+        </div>
+      </div>
+
+      <!-- valuation context -->
+      <div class="card">
+        <div class="label">Where price sits (Power-Law band)</div>
+        <div class="band" id="band"></div>
+        <table>
+          <tbody>
+            <tr><td>Power-law fair (center)</td><td class="r" id="plc">—</td></tr>
+            <tr><td>Price vs fair</td><td class="r" id="pvf">—</td></tr>
+            <tr><td>Umeh fair value</td><td class="r" id="umfair">—</td></tr>
+            <tr><td>Headroom to Top&nbsp;Cap</td><td class="r" id="head">—</td></tr>
+          </tbody>
+        </table>
       </div>
 
       <!-- anchors -->
@@ -153,8 +174,28 @@
     const usd0 = n=>'$'+Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
 
     let closes=[], volumes=[], times=[], chart=null;
+    let c15=[], t15=[], c60=[], t60=[];   // 15-minute and hourly candle closes
 
     async function jget(url){ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(url+' '+r.status); return r.json(); }
+
+    // Load a block of klines for a given interval (closes + open-times in seconds).
+    async function loadKlines(interval, limit){
+      const rows = await jget(`${BINANCE}/klines?symbol=BTCUSDT&interval=${interval}&limit=${limit}`);
+      return { t: rows.map(r=>Math.floor(r[0]/1000)), c: rows.map(r=>parseFloat(r[4])) };
+    }
+    async function refreshKlineTail(interval, tArr, cArr){
+      try{
+        const rows = await jget(`${BINANCE}/klines?symbol=BTCUSDT&interval=${interval}&limit=3`);
+        for(const r of rows){
+          const ts=Math.floor(r[0]/1000); const i=tArr.indexOf(ts);
+          if(i>=0){ cArr[i]=parseFloat(r[4]); } else { tArr.push(ts); cArr.push(parseFloat(r[4])); }
+        }
+      }catch(e){}
+    }
+    // Clock-aligned forecast targets.
+    function nextQuarter(d){ const m=(Math.floor(d.getUTCMinutes()/15)+1)*15; const x=new Date(d); x.setUTCMinutes(0,0,0); x.setUTCMinutes(m); return x; }
+    function nextHour(d){ const x=new Date(d); x.setUTCMinutes(0,0,0); x.setUTCHours(d.getUTCHours()+1); return x; }
+    function hhmmUTC(d){ return d.toUTCString().slice(17,22)+' UTC'; }
 
     // Page Binance.US 1m klines backward until we have ~1 week.
     async function loadHistory(){
@@ -259,6 +300,20 @@
       drawChart(res);
     }
 
+    // Render one slow-horizon forecast card (15-min or hourly).
+    function renderForecast(ids, f, spot, label, target){
+      const up=f.delta>=0;
+      document.getElementById(ids.price).textContent=usd(f.predicted_price);
+      const p=document.getElementById(ids.pill); p.textContent=f.direction; p.className='pill '+(up?'up':'down');
+      document.getElementById(ids.label).textContent=label;
+      document.getElementById(ids.meta).innerHTML=
+        `<span class="${up?'up':'down'}">${up?'+':''}${f.delta.toFixed(2)}</span> · target ${hhmmUTC(target)}`;
+      const tb=document.getElementById(ids.tbl); tb.innerHTML='';
+      Object.keys(f.base_weights).sort((a,b)=>f.base_weights[b]-f.base_weights[a]).forEach(k=>{
+        tb.insertAdjacentHTML('beforeend',`<tr><td>${k}</td><td class="r">${usd0(f.base_means[k])}</td><td class="r">${f.base_weights[k].toFixed(3)}</td></tr>`);
+      });
+    }
+
     function drawChart(res){
       // last 24h of 1m for detail
       const N=Math.min(1440, closes.length);
@@ -282,10 +337,30 @@
 
     async function tick(){
       try{
-        await refreshTail();
+        await Promise.all([refreshTail(), refreshKlineTail('15m',t15,c15), refreshKlineTail('1h',t60,c60)]);
         const [spot, r] = await Promise.all([fetchSpot(), fetchOrderFlow()]);
+        const now=new Date();
+
+        // 1-2 min thrust + Umeh composite
         const res = Umeh.computeUmeh(closes, volumes, spot, r, Date.now());
         render(res);
+
+        // 15-minute mark (next clock quarter) — price-pattern roster
+        if(c15.length>40){
+          const f15 = Umeh.nwachukwuSlow(c15, spot);
+          renderForecast({price:'f15price',pill:'f15pill',label:'f15label',meta:'f15meta',tbl:'f15tbl'},
+            f15, spot, 'Next 15-min mark ('+hhmmUTC(nextQuarter(now)).slice(0,5)+')', nextQuarter(now));
+        }
+        // Top of the hour — scale predicted change by fraction of hour remaining
+        if(c60.length>40){
+          const toh=nextHour(now); const minsLeft=Math.max(1,Math.round((toh-now)/60000));
+          const f60raw = Umeh.nwachukwuSlow(c60, spot);
+          const scale=Math.max(0,Math.min(1,minsLeft/60));
+          const f60={predicted_price:spot+f60raw.delta*scale, delta:f60raw.delta*scale,
+                     direction:(f60raw.delta*scale)>=0?'UP':'DOWN', base_means:f60raw.base_means, base_weights:f60raw.base_weights};
+          renderForecast({price:'f60price',pill:'f60pill',label:'f60label',meta:'f60meta',tbl:'f60tbl'},
+            f60, spot, 'Top of the hour', toh);
+        }
         document.getElementById('livetxt').textContent='live';
       }catch(e){ document.getElementById('livetxt').textContent='reconnecting…'; }
     }
@@ -293,6 +368,9 @@
     (async function(){
       try{
         await loadHistory();
+        // Load slower candle series for the 15-minute and hourly forecasts.
+        const [k15,k60] = await Promise.all([loadKlines('15m',1000), loadKlines('1h',1000)]);
+        t15=k15.t; c15=k15.c; t60=k60.t; c60=k60.c;
         document.getElementById('status').style.display='none';
         document.getElementById('app').style.display='block';
         await tick();
