@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Umeh Formula · BTC</title>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <script src="umeh.js"></script>
+  <style>
+    :root{--bg:#0b0e14;--card:#151a23;--line:#232a36;--text:#e6e9ef;--muted:#8b95a7;
+      --up:#2ecc71;--down:#ff5d5d;--accent:#f7931a;--blue:#4ea1ff;--purple:#b07cff;}
+    *{box-sizing:border-box}
+    body{margin:0;background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;display:flex;justify-content:center}
+    .wrap{width:100%;max-width:900px;padding:24px 16px 70px}
+    header{display:flex;align-items:center;gap:12px}
+    .logo{width:36px;height:36px;border-radius:50%;background:var(--accent);color:#fff;font-weight:800;display:flex;align-items:center;justify-content:center}
+    h1{font-size:20px;margin:0}
+    .sub{color:var(--muted);font-size:13px;margin:6px 0 18px;line-height:1.5}
+    .edu{background:rgba(247,147,26,.08);border:1px solid rgba(247,147,26,.35);color:#ffd9a8;padding:10px 13px;border-radius:10px;font-size:12.5px;margin-bottom:18px}
+    .topbar{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;flex-wrap:wrap}
+    .spot .k{color:var(--muted);font-size:12px;text-transform:uppercase;letter-spacing:.05em}
+    .spot .v{font-size:42px;font-weight:800;line-height:1.05}
+    .live{display:inline-flex;align-items:center;gap:7px;color:var(--muted);font-size:12px}
+    .dot{width:9px;height:9px;border-radius:50%;background:var(--up);animation:p 2s infinite}
+    @keyframes p{0%{box-shadow:0 0 0 0 rgba(46,204,113,.55)}70%{box-shadow:0 0 0 8px rgba(46,204,113,0)}100%{box-shadow:0 0 0 0 rgba(46,204,113,0)}}
+    .card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-top:14px}
+    .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+    @media(max-width:620px){.grid2{grid-template-columns:1fr}.spot .v{font-size:34px}}
+    .label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+    .big{font-size:30px;font-weight:800;margin:6px 0 2px}
+    .up{color:var(--up)}.down{color:var(--down)}.muted{color:var(--muted)}
+    .pill{display:inline-block;font-size:12px;font-weight:700;padding:2px 8px;border-radius:999px;margin-left:6px}
+    .pill.up{background:rgba(46,204,113,.12)}.pill.down{background:rgba(255,93,93,.12)}
+    /* Umeh score gauge */
+    .gauge{height:14px;border-radius:999px;background:linear-gradient(90deg,#ff5d5d,#f7b500,#2ecc71);position:relative;margin:14px 0 6px}
+    .gauge .mk{position:absolute;top:-5px;width:4px;height:24px;background:#fff;border-radius:2px;transform:translateX(-2px);box-shadow:0 0 6px rgba(0,0,0,.6)}
+    .scwrap{display:flex;justify-content:space-between;font-size:11px;color:var(--muted)}
+    /* valuation band */
+    .band{position:relative;height:54px;margin:18px 0 8px}
+    .bandbar{position:absolute;top:22px;left:0;right:0;height:10px;border-radius:999px;background:linear-gradient(90deg,#2ecc71,#f7b500,#ff5d5d)}
+    .bm{position:absolute;top:8px;width:2px;height:38px;background:#fff}
+    .bm .t{position:absolute;top:-14px;left:50%;transform:translateX(-50%);font-size:10px;white-space:nowrap;color:var(--text)}
+    .bm.you{background:var(--blue);width:3px}
+    table{width:100%;border-collapse:collapse;font-size:13px;margin-top:6px}
+    th{text-align:left;color:var(--muted);font-weight:600;padding:5px 6px;border-bottom:1px solid var(--line)}
+    td{padding:5px 6px;border-bottom:1px solid var(--line)}
+    td.r,th.r{text-align:right}
+    .chartwrap{position:relative;height:300px}
+    details summary{cursor:pointer;color:var(--accent);font-size:12px;font-weight:700;margin-top:6px}
+    .foot{color:var(--muted);font-size:12px;margin-top:22px;line-height:1.55}
+    a{color:var(--accent)}
+    .progress{font-size:13px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="logo">₿</div>
+      <h1>Umeh Formula · BTC</h1>
+    </header>
+    <div class="sub">
+      One composite of four models — the <b>Nwachukwu</b> live predictor, the <b>Power&nbsp;Law</b>,
+      <b>Stock-to-Flow</b>, and <b>Top&nbsp;Cap</b> — factored simultaneously. Runs entirely in your
+      browser on ~1&nbsp;week of live 1-minute ticks, recomputed every 10&nbsp;seconds.
+    </div>
+    <div class="edu">⚠️ <b>Educational only — not financial advice.</b> The long-horizon models
+      (power law, stock-to-flow, top cap) are contested public fits and are frequently wrong.</div>
+
+    <div id="status" class="progress">Loading ~1 week of 1-minute history…</div>
+
+    <div id="app" style="display:none">
+      <div class="topbar">
+        <div class="spot">
+          <div class="k">BTC / USD (live)</div>
+          <div class="v" id="spot">—</div>
+          <div class="muted" id="asof" style="font-size:12px"></div>
+        </div>
+        <div class="live"><span class="dot"></span><span id="livetxt">live</span></div>
+      </div>
+
+      <!-- Umeh score -->
+      <div class="card">
+        <div class="label">Umeh score</div>
+        <div class="big"><span id="score">—</span><span class="muted" style="font-size:16px">/100</span>
+          <span class="pill" id="scorepill"></span></div>
+        <div class="gauge"><div class="mk" id="scoremk" style="left:50%"></div></div>
+        <div class="scwrap"><span>0 · distribute / expensive</span><span>accumulate / cheap · 100</span></div>
+        <div class="muted" id="scorenote" style="font-size:12.5px;margin-top:8px"></div>
+      </div>
+
+      <div class="grid2">
+        <!-- short term -->
+        <div class="card">
+          <div class="label">Nwachukwu · next 1–2 min</div>
+          <div class="big"><span id="stprice">—</span> <span class="pill" id="stpill"></span></div>
+          <div class="muted" id="stmeta" style="font-size:12.5px"></div>
+          <details><summary>CFA base models</summary>
+            <table><thead><tr><th>Model</th><th class="r">Predicts</th><th class="r">Weight</th></tr></thead>
+              <tbody id="basetbl"></tbody></table>
+          </details>
+        </div>
+        <!-- valuation context -->
+        <div class="card">
+          <div class="label">Where price sits (Power-Law band)</div>
+          <div class="band" id="band"></div>
+          <table>
+            <tbody>
+              <tr><td>Power-law fair (center)</td><td class="r" id="plc">—</td></tr>
+              <tr><td>Price vs fair</td><td class="r" id="pvf">—</td></tr>
+              <tr><td>Umeh fair value</td><td class="r" id="umfair">—</td></tr>
+              <tr><td>Headroom to Top&nbsp;Cap</td><td class="r" id="head">—</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- anchors -->
+      <div class="card">
+        <div class="label">Long-term anchors</div>
+        <table>
+          <thead><tr><th>Model</th><th class="r">Value</th><th class="r">Detail</th></tr></thead>
+          <tbody id="anchtbl"></tbody>
+        </table>
+      </div>
+
+      <!-- chart -->
+      <div class="card">
+        <div class="label" id="chartlabel">Price · last 24h (1-minute)</div>
+        <div class="chartwrap"><canvas id="chart"></canvas></div>
+      </div>
+
+      <div class="foot">
+        <b>How the Umeh formula works.</b> The <b>Nwachukwu</b> model fuses diverse base predictors
+        (kernel-Bayesian pattern matching à la Shah&nbsp;&amp;&nbsp;Zhang 2014, momentum, volume thrust,
+        RSI, EMA/MACD, and live order-book pressure) via Combinatorial Fusion Analysis for the next
+        1–2&nbsp;minutes. <b>Power&nbsp;Law</b>: price ≈ A·days<sup>5.8</sup> (Santostasi). <b>Stock-to-Flow</b>:
+        price ≈ k·(stock/flow)<sup>3.3</sup> (PlanB) — shown but down-weighted, as it runs hot.
+        <b>Top&nbsp;Cap</b>: ≈ 35×average cap (Willy&nbsp;Woo), approximated from the power-law integral.
+        These are blended into the Umeh fair value and a 0–100 score. Data: Binance.US (1-minute
+        OHLCV) and Coinbase (order book), fetched directly by your browser. The JavaScript here is
+        verified to match the repository's Python reference (<code>umeh_model.py</code>) by
+        <code>tools/parity_check.py</code>. <b>Educational only. Not financial advice.</b>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const BINANCE = 'https://api.binance.us/api/v3';
+    const COINBASE = 'https://api.exchange.coinbase.com';
+    const POLL_MS = 10000;
+    const WEEK_MIN = 10080;           // target ~1 week of 1-minute candles
+    const usd = (n,d=2)=>'$'+Number(n).toLocaleString('en-US',{minimumFractionDigits:d,maximumFractionDigits:d});
+    const usd0 = n=>'$'+Number(n).toLocaleString('en-US',{maximumFractionDigits:0});
+
+    let closes=[], volumes=[], times=[], chart=null;
+
+    async function jget(url){ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error(url+' '+r.status); return r.json(); }
+
+    // Page Binance.US 1m klines backward until we have ~1 week.
+    async function loadHistory(){
+      let endTime = Date.now();
+      const all = [];
+      for(let i=0; i<14 && all.length < WEEK_MIN; i++){
+        const rows = await jget(`${BINANCE}/klines?symbol=BTCUSDT&interval=1m&limit=1000&endTime=${endTime}`);
+        if(!rows.length) break;
+        all.unshift(...rows);
+        endTime = rows[0][0]-1;             // step back before the earliest candle
+        document.getElementById('status').textContent =
+          `Loading ~1 week of 1-minute history… ${all.length} candles`;
+      }
+      // de-dup + sort ascending by open time
+      const seen=new Set(); const clean=[];
+      for(const r of all){ if(!seen.has(r[0])){ seen.add(r[0]); clean.push(r); } }
+      clean.sort((a,b)=>a[0]-b[0]);
+      times = clean.map(r=>Math.floor(r[0]/1000));
+      closes = clean.map(r=>parseFloat(r[4]));
+      volumes = clean.map(r=>parseFloat(r[5]));
+    }
+
+    async function fetchSpot(){
+      try{ const t=await jget(`${BINANCE}/ticker/price?symbol=BTCUSDT`); return parseFloat(t.price); }
+      catch(e){ return closes.length?closes[closes.length-1]:NaN; }
+    }
+    async function fetchOrderFlow(){
+      try{
+        const b=await jget(`${COINBASE}/products/BTC-USD/book?level=2`);
+        const bv=b.bids.reduce((s,x)=>s+parseFloat(x[1]),0);
+        const av=b.asks.reduce((s,x)=>s+parseFloat(x[1]),0);
+        return (bv+av)?(bv-av)/(bv+av):0;
+      }catch(e){ return 0; }
+    }
+    // Refresh the most recent candles so the tail stays current.
+    async function refreshTail(){
+      try{
+        const rows = await jget(`${BINANCE}/klines?symbol=BTCUSDT&interval=1m&limit=3`);
+        for(const r of rows){
+          const ts=Math.floor(r[0]/1000);
+          const i=times.indexOf(ts);
+          if(i>=0){ closes[i]=parseFloat(r[4]); volumes[i]=parseFloat(r[5]); }
+          else { times.push(ts); closes.push(parseFloat(r[4])); volumes.push(parseFloat(r[5])); }
+        }
+      }catch(e){}
+    }
+
+    function bandMarker(parent, leftPct, label, cls){
+      const d=document.createElement('div'); d.className='bm'+(cls?' '+cls:'');
+      d.style.left=Math.max(0,Math.min(100,leftPct))+'%';
+      d.innerHTML=`<span class="t">${label}</span>`; parent.appendChild(d);
+    }
+    // log-scale position of v within [support, resistance]
+    function bandPos(v, lo, hi){
+      const L=Math.log(Math.max(v,1e-9)), a=Math.log(lo), b=Math.log(hi);
+      return 100*(L-a)/Math.max(b-a,1e-9);
+    }
+
+    function render(res){
+      document.getElementById('spot').textContent = usd(res.spot);
+      document.getElementById('asof').textContent = 'updated '+new Date().toLocaleTimeString('en-US',{hour12:false});
+
+      // score
+      const sc=Math.round(res.umeh_score);
+      document.getElementById('score').textContent=sc;
+      document.getElementById('scoremk').style.left=sc+'%';
+      const pill=document.getElementById('scorepill');
+      const lean = sc>=60?'ACCUMULATE':sc<=40?'DISTRIBUTE':'NEUTRAL';
+      pill.textContent=lean; pill.className='pill '+(sc>=60?'up':sc<=40?'down':'');
+      document.getElementById('scorenote').textContent =
+        `Blends valuation (cheap vs power-law band), short-term momentum, live order-book pressure (r=${res.order_flow_r.toFixed(2)}), and headroom to the Top-Cap ceiling.`;
+
+      // short term
+      const up=res.short_term_delta>=0;
+      document.getElementById('stprice').textContent=usd(res.short_term_price);
+      const sp=document.getElementById('stpill'); sp.textContent=res.short_term_dir; sp.className='pill '+(up?'up':'down');
+      document.getElementById('stmeta').innerHTML=
+        `<span class="${up?'up':'down'}">${up?'+':''}${res.short_term_delta.toFixed(2)}</span> vs spot · ${res.n_ticks.toLocaleString()} ticks · flow r=${res.order_flow_r.toFixed(2)}`;
+      const tb=document.getElementById('basetbl'); tb.innerHTML='';
+      Object.keys(res.base_weights).sort((a,b)=>res.base_weights[b]-res.base_weights[a]).forEach(k=>{
+        tb.insertAdjacentHTML('beforeend',`<tr><td>${k}</td><td class="r">${usd0(res.base_means[k])}</td><td class="r">${res.base_weights[k].toFixed(3)}</td></tr>`);
+      });
+
+      // valuation band
+      const pl=res.power_law, tc=res.top_cap;
+      const band=document.getElementById('band'); band.innerHTML='<div class="bandbar"></div>';
+      bandMarker(band, bandPos(pl.center,pl.support,pl.resistance), 'fair');
+      bandMarker(band, bandPos(res.umeh_fair_value,pl.support,pl.resistance), 'Umeh');
+      bandMarker(band, bandPos(res.spot,pl.support,pl.resistance), 'YOU', 'you');
+      document.getElementById('plc').textContent=usd0(pl.center);
+      document.getElementById('pvf').innerHTML=`<span class="${res.pct_of_fair<1?'up':'down'}">${(100*res.pct_of_fair).toFixed(0)}%</span>`;
+      document.getElementById('umfair').textContent=usd0(res.umeh_fair_value);
+      document.getElementById('head').textContent=(100*res.pct_to_top_cap).toFixed(0)+'%';
+
+      // anchors
+      const at=document.getElementById('anchtbl'); at.innerHTML='';
+      at.insertAdjacentHTML('beforeend',`<tr><td>Power Law</td><td class="r">${usd0(pl.center)}</td><td class="r muted">supp ${usd0(pl.support)} · res ${usd0(pl.resistance)}</td></tr>`);
+      at.insertAdjacentHTML('beforeend',`<tr><td>Stock-to-Flow</td><td class="r">${usd0(res.stock_to_flow.model_price)}</td><td class="r muted">S2F ${res.stock_to_flow.s2f_ratio.toFixed(0)} · ${(res.stock_to_flow.supply/1e6).toFixed(2)}M coins</td></tr>`);
+      at.insertAdjacentHTML('beforeend',`<tr><td>Top Cap (ceiling)</td><td class="r">${usd0(tc.top_price)}</td><td class="r muted">avg cap ×35</td></tr>`);
+      at.insertAdjacentHTML('beforeend',`<tr><td><b>Umeh fair value</b></td><td class="r"><b>${usd0(res.umeh_fair_value)}</b></td><td class="r muted">weighted blend</td></tr>`);
+
+      drawChart(res);
+    }
+
+    function drawChart(res){
+      // last 24h of 1m for detail
+      const N=Math.min(1440, closes.length);
+      const cl=closes.slice(-N), tm=times.slice(-N);
+      const labels=tm.map(t=>{const d=new Date(t*1000);return d.toLocaleTimeString('en-US',{hour:'2-digit',minute:'2-digit',hour12:false});});
+      labels.push('+2m');
+      const series=cl.concat([null]);
+      const fc=new Array(N+1).fill(null); fc[N-1]=res.spot; fc[N]=res.short_term_price;
+      const data={labels,datasets:[
+        {label:'BTC/USD (1m)',data:series,borderColor:'#f7931a',backgroundColor:'rgba(247,147,26,.10)',borderWidth:2,pointRadius:0,tension:.25,fill:true},
+        {label:'Umeh forecast',data:fc,borderColor:res.short_term_delta>=0?'#2ecc71':'#ff5d5d',borderDash:[6,5],borderWidth:2,pointRadius:c=>c.dataIndex>=N-1?4:0,tension:.2,spanGaps:true},
+      ]};
+      const opts={responsive:true,maintainAspectRatio:false,animation:false,
+        scales:{x:{grid:{color:'rgba(255,255,255,.04)'},ticks:{color:'#8b95a7',maxTicksLimit:7,autoSkip:true}},
+                y:{grid:{color:'rgba(255,255,255,.05)'},ticks:{color:'#8b95a7',callback:v=>usd0(v)}}},
+        plugins:{legend:{labels:{color:'#c0c6d0',boxWidth:14,font:{size:12}}},
+                 tooltip:{callbacks:{label:c=>c.parsed.y==null?'':c.dataset.label+': '+usd(c.parsed.y)}}}};
+      if(chart){chart.data=data;chart.options=opts;chart.update('none');}
+      else chart=new Chart(document.getElementById('chart').getContext('2d'),{type:'line',data,options:opts});
+    }
+
+    async function tick(){
+      try{
+        await refreshTail();
+        const [spot, r] = await Promise.all([fetchSpot(), fetchOrderFlow()]);
+        const res = Umeh.computeUmeh(closes, volumes, spot, r, Date.now());
+        render(res);
+        document.getElementById('livetxt').textContent='live';
+      }catch(e){ document.getElementById('livetxt').textContent='reconnecting…'; }
+    }
+
+    (async function(){
+      try{
+        await loadHistory();
+        document.getElementById('status').style.display='none';
+        document.getElementById('app').style.display='block';
+        await tick();
+        setInterval(tick, POLL_MS);
+      }catch(e){
+        document.getElementById('status').textContent='Failed to load market data: '+e.message;
+      }
+    })();
+  </script>
+</body>
+</html>
