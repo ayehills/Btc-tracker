@@ -132,6 +132,9 @@ class Config:
     # ---- Data / networking -------------------------------------------------
     binance_base: str = "https://api.binance.us/api/v3"
     coinbase_base: str = "https://api.exchange.coinbase.com"
+    # Kalshi public read-only market data (no auth required for market browsing).
+    kalshi_base: str = "https://api.elections.kalshi.com/trade-api/v2"
+    kalshi_series: str = "KXBTC15M"  # Kalshi "BTC price up in next 15 mins?" market
     symbol_binance: str = "BTCUSDT"
     product_coinbase: str = "BTC-USD"
     http_timeout: float = 25.0
@@ -338,6 +341,64 @@ def fetch_spot(cfg: Config) -> float:
     url = f"{cfg.binance_base}/ticker/price?symbol={cfg.symbol_binance}"
     data = _http_get_json(url, cfg)
     return float(data["price"])
+
+
+@dataclass
+class KalshiImplied:
+    """Kalshi's "BTC price up in next 15 mins?" market (KXBTC15M).
+
+    A single binary contract per 15-minute window: Yes settles if BTC is ABOVE
+    the target ("To Beat") price at expiration, per CF Benchmarks' Real-Time
+    Index. So the market gives us two comparable numbers vs. Binance:
+      * target_price  — the reference level the contract is measured against;
+      * prob_up       — the market-implied probability BTC finishes above it.
+    """
+    ok: bool
+    series: str = ""
+    ticker: str = ""
+    settle_utc: str = ""
+    minutes_to_settle: int = 0
+    target_price: float = float("nan")    # the "To Beat" / target level
+    prob_up: float = float("nan")         # market P(BTC above target at settle)
+    last_price: float = float("nan")      # last traded Yes price (a probability)
+    note: str = ""
+
+
+def fetch_kalshi_btc(cfg: Config, now: Optional[datetime] = None) -> KalshiImplied:
+    """Read Kalshi's active 15-minute "BTC up?" market (KXBTC15M).
+
+    Returns ok=False (rather than raising) so the engine degrades gracefully if
+    Kalshi is unreachable. Picks the active window (nearest future settlement).
+    """
+    now = now or datetime.now(timezone.utc)
+    try:
+        url = (f"{cfg.kalshi_base}/markets?limit=50"
+               f"&series_ticker={cfg.kalshi_series}&status=open")
+        data = _http_get_json(url, cfg)
+        markets = [m for m in data.get("markets", []) if m.get("floor_strike") is not None]
+        if not markets:
+            return KalshiImplied(ok=False, note="no open Kalshi 15-min BTC market")
+
+        # Choose the nearest future settlement (the live 15-minute window).
+        def close_dt(m):
+            return datetime.fromisoformat(m["close_time"].replace("Z", "+00:00"))
+        future = [m for m in markets if close_dt(m) > now]
+        chosen = min(future, key=close_dt) if future else min(markets, key=close_dt)
+        dt = close_dt(chosen)
+
+        target = float(chosen["floor_strike"])
+        yb = float(chosen.get("yes_bid_dollars") or 0.0)
+        ya = float(chosen.get("yes_ask_dollars") or 0.0)
+        prob_up = (yb + ya) / 2.0 if (yb or ya) else float("nan")
+        last = float(chosen.get("last_price_dollars") or 0.0) or float("nan")
+        minutes = max(0, int(round((dt - now).total_seconds() / 60)))
+        return KalshiImplied(
+            ok=True, series=cfg.kalshi_series, ticker=chosen.get("ticker", ""),
+            settle_utc=dt.strftime("%H:%M UTC"), minutes_to_settle=minutes,
+            target_price=target, prob_up=prob_up, last_price=last,
+        )
+    except Exception as exc:
+        return KalshiImplied(ok=False, note=f"Kalshi fetch failed: {exc}")
 
 
 def fetch_order_flow(cfg: Config) -> float:
@@ -833,6 +894,7 @@ class UmehResult:
     pct_to_top_cap: float
     umeh_score: float
     n_ticks_1m: int
+    kalshi: Optional["KalshiImplied"] = None
 
 
 def umeh_score(cfg: Config, spot: float, st_price: float, order_flow_r: float,
@@ -858,7 +920,8 @@ def compute_umeh(cfg: Config,
                  c1: Candles, c15: Candles, c60: Candles,
                  spot: float, order_flow_r: float,
                  velocity_per_min: float = 0.0,
-                 now: Optional[datetime] = None) -> UmehResult:
+                 now: Optional[datetime] = None,
+                 kalshi: Optional["KalshiImplied"] = None) -> UmehResult:
     """Run the entire Umeh formula and assemble the result object."""
     now = now or datetime.now(timezone.utc)
 
@@ -931,6 +994,7 @@ def compute_umeh(cfg: Config,
         umeh_fair_value=umeh_fair, pl_band_position=band,
         pct_of_fair=pct_of_fair, pct_to_top_cap=pct_to_top,
         umeh_score=score, n_ticks_1m=int(len(closes1)),
+        kalshi=kalshi,
     )
 
 
@@ -1045,6 +1109,34 @@ def render_report(cfg: Config, r: UmehResult) -> str:
             f"base {fmt_usd(sc['base']):>13s}   bear {fmt_usd(sc['bear']):>13s}")
     add("")
     add("-" * 70)
+    add("  KALSHI 15-MIN  vs  BINANCE   (BTC up in next 15 min?)")
+    add("-" * 70)
+    k = r.kalshi
+    if k is not None and k.ok:
+        spot_vs_target = r.spot - k.target_price
+        add(f"  Binance spot (now)        : {fmt_usd(r.spot)}")
+        add(f"  Kalshi 15m target (beat)  : {fmt_usd(k.target_price)}  "
+            f"(settles {k.settle_utc}, {k.minutes_to_settle} min out)")
+        add(f"  Spot vs Kalshi target     : {spot_vs_target:+.2f}  "
+            f"(BTC currently {'ABOVE' if spot_vs_target >= 0 else 'BELOW'} target)")
+        if not math.isnan(k.prob_up):
+            lean = "UP" if k.prob_up >= 0.5 else "DOWN"
+            add(f"  Market-implied P(up)      : {100*k.prob_up:4.1f}%   (Kalshi leans {lean})")
+        # Compare the Umeh 15-minute forecast against the same target.
+        if r.f15 is not None:
+            umeh15 = r.f15.predicted_price
+            umeh_up = umeh15 > k.target_price
+            kalshi_up = (not math.isnan(k.prob_up)) and k.prob_up >= 0.5
+            agree = "AGREE" if (umeh_up == kalshi_up) else "DISAGREE"
+            add(f"  Umeh 15m forecast         : {fmt_usd(umeh15)}  "
+                f"({umeh15 - k.target_price:+.2f} vs target -> Umeh says {'UP' if umeh_up else 'DOWN'})")
+            if not math.isnan(k.prob_up):
+                add(f"  Umeh vs Kalshi direction  : {agree}")
+    else:
+        note = (k.note if k is not None else "not fetched")
+        add(f"  Kalshi 15-min data unavailable ({note}).")
+    add("")
+    add("-" * 70)
     add("  LONG-TERM ANCHORS")
     add("-" * 70)
     pl, s2f, tc = r.power_law, r.stock_to_flow, r.top_cap
@@ -1091,6 +1183,15 @@ def umeh_to_dict(r: UmehResult) -> dict:
         "pct_to_top_cap": r.pct_to_top_cap,
         "short_term": fc(r.short_term), "f15": fc(r.f15), "f60": fc(r.f60),
         "power_law": r.power_law, "stock_to_flow": r.stock_to_flow, "top_cap": r.top_cap,
+        "kalshi": (None if (r.kalshi is None or not r.kalshi.ok) else {
+            "series": r.kalshi.series, "ticker": r.kalshi.ticker,
+            "settle_utc": r.kalshi.settle_utc,
+            "minutes_to_settle": r.kalshi.minutes_to_settle,
+            "target_price": r.kalshi.target_price, "prob_up": r.kalshi.prob_up,
+            "last_price": r.kalshi.last_price,
+            "binance_spot": r.spot, "spot_vs_target": r.spot - r.kalshi.target_price,
+            "umeh_15m": (r.f15.predicted_price if r.f15 is not None else None),
+        }),
         "projection": {
             "minutes": r.projection.minutes, "base": r.projection.base,
             "bull": r.projection.bull, "bear": r.projection.bear,
@@ -1103,23 +1204,24 @@ def umeh_to_dict(r: UmehResult) -> dict:
 # SECTION 13 — HIGH-LEVEL ORCHESTRATION
 # ============================================================================
 
-def load_all_data(cfg: Config) -> Tuple[Candles, Candles, Candles, float, float]:
-    """Fetch 1m/15m/1h candles + live spot + order flow."""
+def load_all_data(cfg: Config):
+    """Fetch 1m/15m/1h candles + live spot + order flow + Kalshi implied price."""
     c1 = fetch_candles("1m", cfg.ticks_1m, cfg)
     c15 = fetch_candles("15m", cfg.ticks_15m, cfg)
     c60 = fetch_candles("1h", cfg.ticks_1h, cfg)
     spot = fetch_spot(cfg)
     flow = fetch_order_flow(cfg)
-    return c1, c15, c60, spot, flow
+    kalshi = fetch_kalshi_btc(cfg)
+    return c1, c15, c60, spot, flow, kalshi
 
 
 def run_predict(cfg: Config, as_json: bool = False) -> int:
     try:
-        c1, c15, c60, spot, flow = load_all_data(cfg)
+        c1, c15, c60, spot, flow, kalshi = load_all_data(cfg)
     except DataError as exc:
         sys.stderr.write(f"Data error: {exc}\n")
         return 2
-    result = compute_umeh(cfg, c1, c15, c60, spot, flow)
+    result = compute_umeh(cfg, c1, c15, c60, spot, flow, kalshi=kalshi)
     if as_json:
         print(json.dumps(umeh_to_dict(result), indent=2))
     else:
@@ -1132,13 +1234,14 @@ def run_monitor(cfg: Config, every: float) -> int:
     spot_buf: List[Tuple[float, float]] = []
     print(f"Monitoring every {every:.0f}s. Ctrl-C to stop.\n")
     # Load slower candles once; refresh 1m tail each loop for speed.
-    c1, c15, c60, spot, flow = load_all_data(cfg)
+    c1, c15, c60, spot, flow, kalshi = load_all_data(cfg)
     try:
         while True:
             now_ms = time.time()
             try:
                 spot = fetch_spot(cfg)
                 flow = fetch_order_flow(cfg)
+                kalshi = fetch_kalshi_btc(cfg)
                 tail = fetch_candles("1m", 3, cfg)
                 # splice the fresh tail onto the cached 1m series
                 for t, cl, vol in zip(tail.times, tail.closes, tail.volumes):
@@ -1163,7 +1266,8 @@ def run_monitor(cfg: Config, every: float) -> int:
                 dt_min = max((b[0] - a[0]) / 60.0, 1 / 60.0)
                 vel = (b[1] - a[1]) / dt_min
 
-            result = compute_umeh(cfg, c1, c15, c60, spot, flow, velocity_per_min=vel)
+            result = compute_umeh(cfg, c1, c15, c60, spot, flow,
+                                  velocity_per_min=vel, kalshi=kalshi)
             print("\033[2J\033[H", end="")  # clear screen
             print(render_report(cfg, result))
             time.sleep(every)
