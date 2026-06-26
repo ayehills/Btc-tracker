@@ -256,6 +256,11 @@ def clamp(x: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, x))
 
 
+def normal_cdf(x: float) -> float:
+    """Standard normal CDF via the error function."""
+    return 0.5 * (1.0 + math.erf(x / math.sqrt(2.0)))
+
+
 # ============================================================================
 # SECTION 3 — DATA LAYER (Binance.US klines/ticker, Coinbase order book)
 # ============================================================================
@@ -399,6 +404,36 @@ def fetch_kalshi_btc(cfg: Config, now: Optional[datetime] = None) -> KalshiImpli
         )
     except Exception as exc:
         return KalshiImplied(ok=False, note=f"Kalshi fetch failed: {exc}")
+
+
+def fetch_benchmark_spot(cfg: Config) -> Tuple[float, Dict[str, float]]:
+    """Composite BTC spot across BRTI-constituent exchanges (a CF-Benchmarks proxy).
+
+    Kalshi's BTC markets settle on CF Benchmarks' Bitcoin Real-Time Index (BRTI),
+    a multi-exchange composite — not Binance's last price. We approximate it as
+    the simple mean of the live spot from reachable constituents (Coinbase,
+    Kraken, Bitstamp, Gemini). Returns (composite, {exchange: price}).
+    """
+    sources = {
+        "Coinbase": (f"{cfg.coinbase_base}/products/{cfg.product_coinbase}/ticker",
+                     lambda d: float(d["price"])),
+        "Kraken": ("https://api.kraken.com/0/public/Ticker?pair=XBTUSD",
+                   lambda d: float(next(iter(d["result"].values()))["c"][0])),
+        "Bitstamp": ("https://www.bitstamp.net/api/v2/ticker/btcusd/",
+                     lambda d: float(d["last"])),
+        "Gemini": ("https://api.gemini.com/v1/pubticker/btcusd",
+                   lambda d: float(d["last"])),
+    }
+    comps: Dict[str, float] = {}
+    for name, (url, parse) in sources.items():
+        try:
+            v = parse(_http_get_json(url, cfg))
+            if v > 0:
+                comps[name] = v
+        except Exception:
+            continue
+    composite = float(np.mean(list(comps.values()))) if comps else float("nan")
+    return composite, comps
 
 
 def fetch_order_flow(cfg: Config) -> float:
@@ -999,6 +1034,182 @@ def compute_umeh(cfg: Config,
 
 
 # ============================================================================
+# SECTION 10b — UMEH JR (CF-Benchmarks 15-minute Kalshi forecast)
+# ============================================================================
+#
+# A focused model for the Kalshi "BTC up in next 15 mins?" contract. Unlike the
+# main engine (anchored to Binance), Umeh Jr forecasts the CF-Benchmarks BRTI
+# proxy, because that is what Kalshi actually settles on, and it accounts for the
+# settlement mechanic: Kalshi averages the last ~60 seconds of the index, which
+# damps tail moves. It outputs a settle-value forecast AND its own probability
+# that BTC finishes above the Kalshi target, which it compares to the market's
+# implied probability to surface an edge.
+
+@dataclass
+class UmehJrResult:
+    ok: bool
+    as_of_utc: str
+    settle_utc: str
+    minutes_to_settle: int
+    # live prices
+    benchmark: float
+    components: Dict[str, float]
+    binance_spot: float
+    # kalshi
+    target: float
+    kalshi_p_up: float
+    kalshi_last: float
+    # forecast
+    near_delta: float
+    trend_delta: float
+    expected_move: float
+    forecast_settle: float
+    sigma_settle: float
+    band_low: float
+    band_high: float
+    model_p_up: float
+    # signal
+    edge: float
+    lean: str
+    direction: str
+    note: str = ""
+
+
+def compute_umeh_jr(cfg: Config, c1: Candles, c15: Candles,
+                    benchmark: float, components: Dict[str, float],
+                    binance_spot: float, order_flow_r: float,
+                    kalshi: KalshiImplied,
+                    now: Optional[datetime] = None,
+                    edge_threshold: float = 0.07) -> UmehJrResult:
+    """Forecast the benchmark at the Kalshi 15-minute settlement and price the edge."""
+    now = now or datetime.now(timezone.utc)
+    if not (kalshi and kalshi.ok):
+        # Without a live Kalshi market we still forecast to the next quarter hour.
+        settle_dt = next_quarter_hour(now)
+        settle_utc = settle_dt.strftime("%H:%M UTC")
+        minutes = max(1, int(round((settle_dt - now).total_seconds() / 60)))
+        target = float("nan")
+        k_pup = float("nan")
+        k_last = float("nan")
+    else:
+        settle_utc = kalshi.settle_utc
+        minutes = max(1, kalshi.minutes_to_settle)
+        target = kalshi.target_price
+        k_pup = kalshi.prob_up
+        k_last = kalshi.last_price
+
+    # Drift = blend of near-term (1m fast roster) and 15m-trend (slow roster),
+    # computed on Binance candles (deltas are ~exchange-agnostic), then applied
+    # to the benchmark price level.
+    f1 = nwachukwu_forecast(c1.closes, cfg, binance_spot, fast_roster(),
+                            volumes=c1.volumes, order_flow_r=order_flow_r)
+    near_delta = f1.delta
+    trend_delta = 0.0
+    if len(c15.closes) > 40:
+        f15 = nwachukwu_forecast(c15.closes, cfg, binance_spot, slow_roster())
+        trend_delta = f15.delta
+
+    expected_move = (0.40 * near_delta * min(minutes, 3)
+                     + 0.60 * trend_delta * (minutes / 15.0))
+    forecast_settle = benchmark + expected_move
+
+    # Settlement volatility: per-minute vol grown over the horizon, damped ~0.85
+    # because Kalshi averages the final 60 seconds of the index.
+    sigma1 = per_minute_volatility(c1.closes, 30)
+    sigma_settle = max(sigma1 * math.sqrt(max(minutes, 1)) * 0.85, _EPS)
+
+    if math.isnan(target):
+        model_p_up = float("nan")
+        edge = float("nan")
+        lean = "n/a (no live Kalshi market)"
+        direction = _direction(expected_move)
+    else:
+        z = (forecast_settle - target) / sigma_settle
+        model_p_up = normal_cdf(z)
+        edge = (model_p_up - k_pup) if not math.isnan(k_pup) else float("nan")
+        if math.isnan(edge):
+            lean = "no market price"
+        elif edge > edge_threshold:
+            lean = "LEAN YES (model > market)"
+        elif edge < -edge_threshold:
+            lean = "LEAN NO (model < market)"
+        else:
+            lean = "no clear edge"
+        direction = "UP" if forecast_settle >= target else "DOWN"
+
+    return UmehJrResult(
+        ok=True, as_of_utc=now.strftime("%Y-%m-%d %H:%M:%S UTC"),
+        settle_utc=settle_utc, minutes_to_settle=minutes,
+        benchmark=benchmark, components=components, binance_spot=binance_spot,
+        target=target, kalshi_p_up=k_pup, kalshi_last=k_last,
+        near_delta=near_delta, trend_delta=trend_delta, expected_move=expected_move,
+        forecast_settle=forecast_settle, sigma_settle=sigma_settle,
+        band_low=forecast_settle - sigma_settle, band_high=forecast_settle + sigma_settle,
+        model_p_up=model_p_up, edge=edge, lean=lean, direction=direction,
+    )
+
+
+def render_jr(r: UmehJrResult) -> str:
+    L: List[str] = []
+    a = L.append
+    a("=" * 70)
+    a("  UMEH JR  —  CF-Benchmark 15-minute Kalshi forecast")
+    a(f"  {r.as_of_utc}   settles {r.settle_utc}  ({r.minutes_to_settle} min out)")
+    a("=" * 70)
+    a("")
+    a("  CURRENT BTC (live)")
+    comp = "  ".join(f"{k[:2]} {fmt_usd(v,0)}" for k, v in r.components.items())
+    a(f"    Benchmark (RTI proxy) : {fmt_usd(r.benchmark)}   [{comp}]")
+    a(f"    Binance spot          : {fmt_usd(r.binance_spot)}   "
+      f"(Δ {r.binance_spot - r.benchmark:+.2f} vs benchmark)")
+    a("  " + "-" * 64)
+    a("  KALSHI 15-MIN (live)")
+    if not math.isnan(r.target):
+        a(f"    Target (\"to beat\")     : {fmt_usd(r.target)}")
+        if not math.isnan(r.kalshi_p_up):
+            a(f"    Market P(up)          : {100*r.kalshi_p_up:5.1f}%"
+              + (f"   (last Yes ${r.kalshi_last:.2f})" if not math.isnan(r.kalshi_last) else ""))
+    else:
+        a("    (no live Kalshi 15-min market right now)")
+    a("  " + "-" * 64)
+    a("  UMEH JR FORECAST (on the benchmark)")
+    a(f"    Expected move ({r.minutes_to_settle:>2d}m)   : {r.expected_move:+.2f}   "
+      f"(near {r.near_delta:+.2f}, trend {r.trend_delta:+.2f})")
+    a(f"    Forecast settle value : {fmt_usd(r.forecast_settle)}"
+      + ("" if math.isnan(r.target) else f"   (Δ {r.forecast_settle - r.target:+.2f} vs target)"))
+    a(f"    1σ band               : {fmt_usd(r.band_low,0)} .. {fmt_usd(r.band_high,0)}")
+    if not math.isnan(r.model_p_up):
+        a(f"    Model P(up)           : {100*r.model_p_up:5.1f}%")
+    a("  " + "-" * 64)
+    a("  SIGNAL")
+    if not math.isnan(r.edge):
+        a(f"    Edge (model - market) : {100*r.edge:+5.1f} pts   ->  {r.lean}")
+    a(f"    Potential 15m         : {r.direction} to {fmt_usd(r.forecast_settle)}")
+    a("")
+    a("=" * 70)
+    a("  EDUCATIONAL ONLY — NOT FINANCIAL ADVICE.")
+    a("  Benchmark is a public-exchange proxy for CF Benchmarks BRTI;")
+    a("  Kalshi settles on the official index, which may differ slightly.")
+    a("=" * 70)
+    return "\n".join(L)
+
+
+def jr_to_dict(r: UmehJrResult) -> dict:
+    return {
+        "as_of_utc": r.as_of_utc, "settle_utc": r.settle_utc,
+        "minutes_to_settle": r.minutes_to_settle,
+        "benchmark": r.benchmark, "components": r.components,
+        "binance_spot": r.binance_spot,
+        "kalshi_target": r.target, "kalshi_p_up": r.kalshi_p_up,
+        "near_delta": r.near_delta, "trend_delta": r.trend_delta,
+        "expected_move": r.expected_move, "forecast_settle": r.forecast_settle,
+        "sigma_settle": r.sigma_settle, "band_low": r.band_low, "band_high": r.band_high,
+        "model_p_up": r.model_p_up, "edge": r.edge, "lean": r.lean,
+        "direction": r.direction,
+    }
+
+
+# ============================================================================
 # SECTION 11 — WALK-FORWARD BACKTESTER
 # ============================================================================
 
@@ -1276,6 +1487,42 @@ def run_monitor(cfg: Config, every: float) -> int:
         return 0
 
 
+def run_jr(cfg: Config, as_json: bool = False, loop_every: float = 0.0) -> int:
+    """Focused Umeh Jr view: live BTC + Umeh Jr 15m forecast + Kalshi numbers."""
+    def once() -> UmehJrResult:
+        c1 = fetch_candles("1m", 500, cfg)
+        c15 = fetch_candles("15m", 500, cfg)
+        binance_spot = fetch_spot(cfg)
+        benchmark, comps = fetch_benchmark_spot(cfg)
+        if math.isnan(benchmark):
+            benchmark = binance_spot  # fall back if all constituents fail
+        flow = fetch_order_flow(cfg)
+        kalshi = fetch_kalshi_btc(cfg)
+        return compute_umeh_jr(cfg, c1, c15, benchmark, comps,
+                               binance_spot, flow, kalshi)
+
+    try:
+        if loop_every and not as_json:
+            print(f"Umeh Jr live — refresh every {loop_every:.0f}s. Ctrl-C to stop.\n")
+            while True:
+                r = once()
+                print("\033[2J\033[H", end="")
+                print(render_jr(r))
+                time.sleep(loop_every)
+        r = once()
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        return 0
+    except DataError as exc:
+        sys.stderr.write(f"Data error: {exc}\n")
+        return 2
+    if as_json:
+        print(json.dumps(jr_to_dict(r), indent=2))
+    else:
+        print(render_jr(r))
+    return 0
+
+
 def run_backtest(cfg: Config) -> int:
     try:
         c1 = fetch_candles("1m", 1000, cfg)
@@ -1340,8 +1587,9 @@ def build_parser() -> argparse.ArgumentParser:
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     p.add_argument("command", nargs="?", default="predict",
-                   choices=["predict", "monitor", "backtest", "anchors"],
-                   help="what to run (default: predict)")
+                   choices=["predict", "monitor", "backtest", "anchors", "jr"],
+                   help="what to run (default: predict). 'jr' = focused "
+                        "CF-Benchmark 15-minute Kalshi forecast.")
     p.add_argument("--json", action="store_true", help="emit JSON instead of a report")
     p.add_argument("--every", type=float, default=10.0,
                    help="monitor refresh interval in seconds (default 10)")
@@ -1360,6 +1608,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         return run_predict(cfg, as_json=args.json)
     if args.command == "monitor":
         return run_monitor(cfg, every=max(2.0, args.every))
+    if args.command == "jr":
+        loop = args.every if "--every" in (argv or sys.argv[1:]) else 0.0
+        return run_jr(cfg, as_json=args.json, loop_every=loop)
     if args.command == "backtest":
         return run_backtest(cfg)
     if args.command == "anchors":
