@@ -1,89 +1,65 @@
-# BTC Tracker · Nwachukwu Model
+# 🌸 Anime Companion — spoiler-safe
 
-A small Flask webpage that, **every time you refresh**, shows the live BTC/USD
-price and forecasts the price **15 minutes from now** and **at the top of the
-hour** — recomputed on each load by running the **Nwachukwu Model**.
+A local browser chat you can talk to about **any anime**. It acts like a friend
+who has seen the whole show — but it will **never spoil anything past where you
+are**, and you don’t have to tell it which episode you’re on. It **infers your
+progress from what you say** (scenes you mention, arcs you reference, "I just
+finished the Marineford fight") and hard-gates every reply to that point.
 
-## The Nwachukwu Model
+Built on **Claude (Opus 4.8)** via the official Anthropic SDK, grounded with
+live anime metadata (episode counts, synopsis) from **Jikan / MyAnimeList**.
 
-The Nwachukwu Model blends two published approaches:
+## How the no-spoiler logic works
 
-1. **Bayesian Regression and Bitcoin** — Shah & Zhang (2014). A pattern-mining
-   Bayesian estimator (the faithful Python port in
-   [`btc_bayesian_predictor.py`](btc_bayesian_predictor.py)) that predicts the
-   next-step price change from RBF-kernel-weighted historical patterns.
+1. **You pick a show** (search box) and just start chatting — no need to type an
+   episode number.
+2. On every message, the app makes a quick **progress-inference** call: it reads
+   the conversation and conservatively estimates the furthest point *you* have
+   clearly reached (mapping any scene/arc you mention to its episode). It only
+   moves forward, and stays put when unsure.
+3. Then it answers with a **spoiler-gated system prompt**: Claude is told your
+   current episode and is forbidden from revealing, hinting at, or foreshadowing
+   anything beyond it — including teasy "wait till you see…" lines.
 
-2. **Combinatorial Fusion Analysis (CFA)** — Wu, Ye, Xu & Hsu,
-   *"Bitcoin Price Prediction using Machine Learning and Combinatorial Fusion
-   Analysis"* (IEEE CAI). Rather than trusting one model, CFA combines a set of
-   **diverse**, individually-decent scoring systems and reliably beats any one
-   of them.
+If it doesn’t yet know where you are, it assumes the very beginning and stays
+maximally careful.
 
-How the blend works (in [`nwachukwu_model.py`](nwachukwu_model.py)):
-
-- **Five diverse base forecasters** each predict the next price with an
-  uncertainty: the **Bayesian** regressor (the expert), **Momentum**,
-  **Mean-Reversion**, an **EMA/MACD** technical model, and a **Random-Walk**
-  baseline.
-- Each prediction is spread into a truncated normal distribution over a grid of
-  candidate prices — the density is that model's **score** `s_A(d_i)`,
-  normalized to `[0, 1]` (exactly the paper's construction).
-- From the scores we derive each model's **rank function** and **Rank-Score
-  Characteristic (RSC) function** `f_A(i) = s_A(r_A⁻¹(i))`.
-- **Cognitive diversity** between two systems is the RMS area between their RSC
-  functions, `CD(A,B) = sqrt(mean_i (f_A(i) − f_B(i))²)`; a model's **diversity
-  strength** is its mean CD to the others.
-- The systems are fused by **score combination weighted by diversity strength**
-  (WCDS). The fused score's arg-max candidate price is the Nwachukwu forecast.
-
-The forecast change is anchored to the **live spot price** on each refresh so
-the number reflects the price you actually see now.
-
-## Run it
+## Setup
 
 ```bash
 pip install -r requirements.txt
+export ANTHROPIC_API_KEY=sk-ant-...        # from console.anthropic.com
+#   Windows: setx ANTHROPIC_API_KEY "sk-ant-..."
+```
+
+Requires **Python 3.9+**.
+
+## Run
+
+```bash
 python app.py
 # open http://localhost:5000
 ```
 
-Press **Refresh now** (or tick *Auto-refresh every 60s*) to recompute.
+Or chat in the terminal:
 
-## Data sources
-
-- **Spot price:** Kraken public ticker (Coinbase fallback).
-- **Candles:** Kraken public OHLC — 15-minute candles for the 15-minute
-  forecast, 1-hour candles for the top-of-the-hour forecast. No API key needed.
-
-Fitted models are cached per timeframe for ~90s so rapid refreshes stay instant;
-the live spot price is always re-fetched.
-
-## Deploy to a public URL (e.g. from a phone)
-
-The repo includes a `render.yaml` blueprint and a `Procfile`, so it can be
-hosted on a free tier with no local setup:
-
-**Render (recommended):**
-1. Push this branch to GitHub (already done).
-2. On [render.com](https://render.com), sign in with GitHub.
-3. **New +** → **Blueprint** → pick the `ayehills/Btc-tracker` repo.
-4. Render reads `render.yaml`, builds, and gives you a public
-   `https://btc-tracker-nwachukwu.onrender.com`-style URL.
-
-The free tier sleeps after inactivity, so the first hit after idle takes a few
-seconds to wake and fit the model.
+```bash
+python anime_companion.py "Jujutsu Kaisen"
+```
 
 ## Files
 
 | File | Purpose |
 | --- | --- |
-| `app.py` | Flask web app (`/` page, `/api/analysis` JSON). |
-| `predictor_service.py` | Live data feed + caching + builds the forecasts. |
-| `nwachukwu_model.py` | The Nwachukwu Model (Bayesian + CFA fusion). |
-| `btc_bayesian_predictor.py` | Shah & Zhang Bayesian-regression port (base model). |
-| `templates/index.html` | The page UI, including the CFA fusion breakdown. |
+| `anime_companion.py` | Core engine — Claude client, progress inference, spoiler-safe prompt, Jikan data. Also a small CLI. |
+| `app.py` | Flask web app (chat page + streaming `/api/chat` + `/api/search`). |
+| `templates/index.html` | The chat UI (anime picker, streaming bubbles, live "where you are"). |
+| `data/progress.json` | Remembers how far you are in each show (created at runtime, git-ignored). |
 
-## Disclaimer
+## Notes
 
-Research and education only. **Not financial advice.** Modeled performance does
-not imply live results.
+- Your **Anthropic API key** is read from the environment and never stored or
+  sent anywhere except Anthropic.
+- Anime data comes from the free, key-less **Jikan** API (MyAnimeList).
+- Spoiler-safety is strong but not infallible — it relies on the model and on
+  your show being in its knowledge. If it ever slips, tell it and it will adjust.

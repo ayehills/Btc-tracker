@@ -1,7 +1,3 @@
+anthropic>=0.112
 flask>=3.0
-numpy>=1.24
-scipy>=1.10
-scikit-learn>=1.3
 requests>=2.31
-python-dotenv>=1.0
-gunicorn>=21.2

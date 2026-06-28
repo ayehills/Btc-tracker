@@ -3,294 +3,206 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>BTC Tracker — Nwachukwu Model</title>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+  <title>Anime Companion · spoiler-safe</title>
   <style>
-    :root {
-      --bg: #0b0e14;
-      --card: #151a23;
-      --line: #232a36;
-      --text: #e6e9ef;
-      --muted: #8b95a7;
-      --up: #2ecc71;
-      --down: #ff5d5d;
-      --flat: #c0c6d0;
-      --accent: #f7931a;
-    }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0; background: var(--bg); color: var(--text);
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      min-height: 100vh; display: flex; justify-content: center;
-    }
-    .wrap { width: 100%; max-width: 880px; padding: 26px 18px 60px; }
-    header { display: flex; align-items: center; gap: 12px; }
-    .logo {
-      width: 34px; height: 34px; border-radius: 50%; background: var(--accent);
-      color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center;
-    }
-    h1 { font-size: 19px; margin: 0; font-weight: 700; }
-    .sub { color: var(--muted); font-size: 13px; margin: 6px 0 20px; line-height: 1.5; }
-
-    .topbar { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-    .spot .k { color: var(--muted); font-size: 12px; letter-spacing: .05em; text-transform: uppercase; }
-    .spot .v { font-size: 46px; font-weight: 800; line-height: 1.05; margin-top: 2px; }
-    .spot .chg { font-size: 14px; font-weight: 700; margin-top: 4px; }
-    .live {
-      display: inline-flex; align-items: center; gap: 7px; color: var(--muted);
-      font-size: 12px;
-    }
-    .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 0 rgba(46,204,113,.6); animation: pulse 2s infinite; }
-    .dot.paused { background: var(--muted); animation: none; box-shadow: none; }
-    @keyframes pulse {
-      0% { box-shadow: 0 0 0 0 rgba(46,204,113,.55); }
-      70% { box-shadow: 0 0 0 8px rgba(46,204,113,0); }
-      100% { box-shadow: 0 0 0 0 rgba(46,204,113,0); }
-    }
-
-    .chartcard {
-      background: var(--card); border: 1px solid var(--line); border-radius: 16px;
-      padding: 16px 16px 8px; margin: 18px 0;
-    }
-    .chartwrap { position: relative; height: 320px; }
-
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-    @media (max-width: 600px) { .grid { grid-template-columns: 1fr; } .spot .v { font-size: 38px; } }
-
-    .card { background: var(--card); border: 1px solid var(--line); border-radius: 16px; padding: 18px 20px; }
-    .card .label { font-size: 13px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
-    .card .price { font-size: 30px; font-weight: 800; margin: 8px 0 2px; }
-    .card .meta { font-size: 13px; color: var(--muted); }
-    .delta { font-weight: 700; }
-    .up { color: var(--up); } .down { color: var(--down); } .flat { color: var(--flat); }
-    .pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 2px 8px; border-radius: 999px; margin-left: 8px; }
-    .pill.up { background: rgba(46,204,113,.12); }
-    .pill.down { background: rgba(255,93,93,.12); }
-    .pill.flat { background: rgba(192,198,208,.12); }
-
-    .fusion { margin-top: 12px; }
-    .fusion summary { cursor: pointer; color: var(--accent); font-size: 12px; font-weight: 700; letter-spacing: .03em; }
-    .fusion table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 12px; }
-    .fusion th { text-align: left; color: var(--muted); font-weight: 600; padding: 4px 6px; border-bottom: 1px solid var(--line); }
-    .fusion td { padding: 4px 6px; border-bottom: 1px solid var(--line); }
-    .fusion tbody tr:first-child td { color: var(--text); font-weight: 700; }
-
-    .controls { display: flex; align-items: center; gap: 16px; margin: 20px 0 0; flex-wrap: wrap; }
-    button { background: #1c2330; color: var(--text); border: 1px solid var(--line); border-radius: 10px; padding: 9px 16px; font-size: 14px; font-weight: 700; cursor: pointer; }
-    button:hover { border-color: var(--accent); }
-    .err { background: rgba(255,93,93,.08); border: 1px solid rgba(255,93,93,.35); color: #ffb3b3; padding: 14px 16px; border-radius: 12px; font-size: 14px; white-space: pre-wrap; }
-    .disclaimer { color: var(--muted); font-size: 12px; margin-top: 24px; line-height: 1.5; }
-    a { color: var(--accent); }
+    :root{--bg:#0d0b14;--panel:#171221;--line:#2a2336;--text:#ece9f3;--muted:#9b93ad;
+      --accent:#ff5da2;--accent2:#8b5cff;--you:#22304a;--bot:#1e1730;--ok:#39d98a;}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,rgba(139,92,255,.18),transparent),var(--bg);
+      color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      height:100vh;display:flex;justify-content:center}
+    .wrap{width:100%;max-width:780px;display:flex;flex-direction:column;height:100vh;padding:14px 14px 0}
+    header{display:flex;align-items:center;gap:12px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+    .logo{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+      display:flex;align-items:center;justify-content:center;font-size:20px}
+    h1{font-size:17px;margin:0}
+    .sub{color:var(--muted);font-size:12px}
+    /* anime picker */
+    .picker{margin-top:14px}
+    .searchbar{display:flex;gap:8px}
+    input[type=text]{flex:1;background:var(--panel);border:1px solid var(--line);border-radius:12px;
+      color:var(--text);padding:12px 14px;font-size:15px;outline:none}
+    input[type=text]:focus{border-color:var(--accent2)}
+    button{background:linear-gradient(135deg,var(--accent),var(--accent2));color:#fff;border:0;border-radius:12px;
+      padding:12px 16px;font-weight:700;cursor:pointer;font-size:15px}
+    button:disabled{opacity:.5;cursor:default}
+    .results{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px}
+    @media(max-width:560px){.results{grid-template-columns:1fr}}
+    .card{display:flex;gap:10px;background:var(--panel);border:1px solid var(--line);border-radius:14px;
+      padding:10px;cursor:pointer;transition:.15s}
+    .card:hover{border-color:var(--accent)}
+    .card img{width:54px;height:74px;object-fit:cover;border-radius:8px;background:#000;flex:none}
+    .card .t{font-weight:700;font-size:14px;line-height:1.2}
+    .card .m{color:var(--muted);font-size:12px;margin-top:3px}
+    /* selected anime banner */
+    .now{display:none;align-items:center;gap:12px;margin-top:12px;background:var(--panel);
+      border:1px solid var(--line);border-radius:14px;padding:10px 12px}
+    .now img{width:42px;height:58px;object-fit:cover;border-radius:8px;flex:none}
+    .now .t{font-weight:800}
+    .where{font-size:12.5px;color:var(--ok);margin-top:2px}
+    .now .change{margin-left:auto;background:#241d33;border:1px solid var(--line);color:var(--muted);
+      padding:8px 12px;font-size:12px;font-weight:700}
+    /* chat */
+    .chat{flex:1;overflow-y:auto;padding:14px 2px;display:none;flex-direction:column;gap:12px}
+    .msg{max-width:86%;padding:11px 14px;border-radius:16px;line-height:1.5;white-space:pre-wrap;font-size:15px}
+    .msg.you{align-self:flex-end;background:var(--you);border-bottom-right-radius:5px}
+    .msg.bot{align-self:flex-start;background:var(--bot);border:1px solid var(--line);border-bottom-left-radius:5px}
+    .msg.bot .cursor{display:inline-block;width:7px;height:15px;background:var(--accent);margin-left:1px;
+      vertical-align:-2px;animation:blink 1s steps(2) infinite}
+    @keyframes blink{50%{opacity:0}}
+    .composer{display:none;gap:8px;padding:12px 0;border-top:1px solid var(--line)}
+    .hint{color:var(--muted);font-size:12px;text-align:center;margin:8px 0}
+    .warn{background:rgba(255,93,162,.1);border:1px solid rgba(255,93,162,.4);color:#ffc1dc;
+      padding:10px 13px;border-radius:12px;font-size:13px;margin-top:12px}
+    a{color:var(--accent)}
   </style>
 </head>
 <body>
   <div class="wrap">
     <header>
-      <div class="logo">₿</div>
-      <h1>BTC Tracker · Nwachukwu Model</h1>
+      <div class="logo">🌸</div>
+      <div>
+        <h1>Anime Companion</h1>
+        <div class="sub">Talk about any anime — I know it all, but I’ll never spoil past where you are.</div>
+      </div>
     </header>
-    <div class="sub">
-      Live price &amp; chart with the <strong>Nwachukwu Model</strong> — Bayesian regression
-      (Shah&nbsp;&amp;&nbsp;Zhang, 2014) blended with Combinatorial Fusion Analysis (Wu&nbsp;et&nbsp;al., IEEE&nbsp;CAI).
-      Analyzes the <strong>last 700 ticks</strong> with live order-book pressure; every 10&nbsp;seconds the
-      price is fed back through the formula. Forecasts a fast <strong>1–2&nbsp;min buy/sell thrust</strong>,
-      the next <strong>:00/:15/:30/:45</strong> mark, and the top of the hour.
-    </div>
 
-    <div id="err" class="err" style="display:none;"></div>
+    {% if not has_key %}
+    <div class="warn">⚠️ <b>ANTHROPIC_API_KEY isn’t set.</b> Set it and restart:
+      <code>export ANTHROPIC_API_KEY=sk-ant-…</code> then <code>python app.py</code>.</div>
+    {% endif %}
 
-    <div class="topbar">
-      <div class="spot">
-        <div class="k">Current BTC / USD</div>
-        <div class="v" id="spot">—</div>
-        <div class="chg" id="chg">&nbsp;</div>
+    <!-- pick an anime -->
+    <div class="picker" id="picker">
+      <div class="searchbar">
+        <input id="q" type="text" placeholder="Search an anime…  (e.g. Jujutsu Kaisen)" autofocus />
+        <button id="searchBtn">Search</button>
       </div>
-      <div class="live">
-        <span class="dot" id="livedot"></span>
-        <span id="status">connecting…</span>
+      <div class="results" id="results"></div>
+    </div>
+
+    <!-- selected -->
+    <div class="now" id="now">
+      <img id="nowImg" src="" alt="" />
+      <div>
+        <div class="t" id="nowTitle"></div>
+        <div class="where" id="where">figuring out where you are…</div>
       </div>
+      <button class="change" id="changeBtn">change</button>
     </div>
 
-    <div class="chartcard">
-      <div class="chartwrap"><canvas id="chart"></canvas></div>
+    <div class="chat" id="chat"></div>
+    <div class="hint" id="hint" style="display:none">
+      Just talk naturally — mention what you’ve watched and I’ll keep us spoiler-free from there.
     </div>
 
-    <div class="grid" id="cards"></div>
-
-    <div class="controls">
-      <button id="pause">⏸ Pause live</button>
-      <button onclick="window.location.reload()">⟳ Hard refresh</button>
-    </div>
-
-    <div class="disclaimer">
-      The <strong>Nwachukwu Model</strong> blends the Bayesian-regression estimator of
-      Shah &amp; Zhang (2014), <em>"Bayesian Regression and Bitcoin"</em>, with the
-      Combinatorial Fusion Analysis (CFA) framework of Wu, Ye, Xu &amp; Hsu,
-      <em>"Bitcoin Price Prediction using Machine Learning and Combinatorial Fusion Analysis"</em>
-      (IEEE CAI). Five diverse base models (Bayesian, momentum, mean-reversion, EMA/MACD,
-      random-walk) each become a scoring system; they are fused by score combination weighted
-      by cognitive-diversity strength, applied live to recent 15-minute and 1-hour candles.
-      <strong>Research and education only — not financial advice.</strong>
+    <div class="composer" id="composer">
+      <input id="msg" type="text" placeholder="Say anything about the show…" />
+      <button id="sendBtn">Send</button>
     </div>
   </div>
 
   <script>
-    const POLL_MS = 10000;            // live update interval: 10 seconds
-    const fmtUSD = (n) => '$' + Number(n).toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-    const fmtUSD0 = (n) => '$' + Number(n).toLocaleString('en-US', {maximumFractionDigits: 0});
-    const dirClass = (d) => (d || 'flat').toLowerCase();
+    let anime = null;           // selected anime dict
+    let history = [];           // [{role, content}]
+    let streaming = false;
 
-    function fmtClock(ts) {
-      const d = new Date(ts * 1000);
-      return d.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', hour12: false});
+    const $ = id => document.getElementById(id);
+    const esc = s => s.replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+    async function doSearch(){
+      const q = $('q').value.trim(); if(!q) return;
+      $('searchBtn').disabled = true; $('results').innerHTML = '<div class="sub">Searching…</div>';
+      try{
+        const r = await fetch('/api/search?q='+encodeURIComponent(q));
+        const d = await r.json();
+        $('results').innerHTML = '';
+        (d.results||[]).forEach(a=>{
+          const el = document.createElement('div'); el.className='card';
+          el.innerHTML = `<img src="${a.image||''}" onerror="this.style.visibility='hidden'"/>
+            <div><div class="t">${esc(a.display_title||a.title)}</div>
+            <div class="m">${a.type||'Anime'} · ${a.episodes?a.episodes+' eps':'ongoing'}${a.year?' · '+a.year:''}</div></div>`;
+          el.onclick = ()=> selectAnime(a);
+          $('results').appendChild(el);
+        });
+        if(!(d.results||[]).length) $('results').innerHTML = '<div class="sub">No results.</div>';
+      }catch(e){ $('results').innerHTML = '<div class="sub">Search failed.</div>'; }
+      $('searchBtn').disabled = false;
     }
 
-    let chart = null;
-    let prevSpot = null;
-    let paused = false;
-    let timer = null;
-
-    function buildChart(payload) {
-      const hist = payload.history || [];
-      const labels = hist.map(h => fmtClock(h.ts));
-      const actual = hist.map(h => h.price);
-      const n = hist.length;
-
-      // Append one slot per forecast (1m thrust, 15m mark, top of hour),
-      // labelled with each one's clock target.
-      const fc = payload.forecasts || [];
-      const k = fc.length;
-      fc.forEach(f => labels.push(f.target_time_utc.replace(' UTC', '')));
-      const actualData = actual.concat(new Array(k).fill(null));
-
-      const forecastData = new Array(n + k).fill(null);
-      if (n > 0) forecastData[n - 1] = payload.spot;     // anchor at live price
-      fc.forEach((f, i) => { forecastData[n + i] = f.predicted_price; });
-
-      const lastF = k ? fc[k - 1] : null;
-      const upTotal = lastF ? (lastF.predicted_price >= payload.spot) : true;
-      const fColor = upTotal ? '#2ecc71' : '#ff5d5d';
-
-      const ctx = document.getElementById('chart').getContext('2d');
-      const data = {
-        labels,
-        datasets: [
-          {
-            label: 'BTC/USD (15m close)',
-            data: actualData,
-            borderColor: '#f7931a',
-            backgroundColor: 'rgba(247,147,26,0.10)',
-            borderWidth: 2, pointRadius: 0, tension: 0.25, fill: true, spanGaps: false,
-          },
-          {
-            label: 'Nwachukwu forecast',
-            data: forecastData,
-            borderColor: fColor,
-            borderDash: [6, 5],
-            borderWidth: 2,
-            pointRadius: (c) => (c.dataIndex >= n ? 4 : 0),
-            pointBackgroundColor: fColor,
-            tension: 0.2, fill: false, spanGaps: true,
-          },
-        ],
-      };
-      const options = {
-        responsive: true, maintainAspectRatio: false, animation: false,
-        interaction: { intersect: false, mode: 'index' },
-        scales: {
-          x: { grid: { color: 'rgba(255,255,255,0.04)' }, ticks: { color: '#8b95a7', maxTicksLimit: 8, autoSkip: true } },
-          y: { grid: { color: 'rgba(255,255,255,0.05)' }, ticks: { color: '#8b95a7', callback: (v) => fmtUSD0(v) } },
-        },
-        plugins: {
-          legend: { labels: { color: '#c0c6d0', boxWidth: 14, font: { size: 12 } } },
-          tooltip: { callbacks: { label: (c) => c.parsed.y == null ? '' : c.dataset.label + ': ' + fmtUSD(c.parsed.y) } },
-        },
-      };
-      if (chart) { chart.data = data; chart.options = options; chart.update('none'); }
-      else { chart = new Chart(ctx, { type: 'line', data, options }); }
+    function selectAnime(a){
+      anime = a; history = [];
+      $('picker').style.display='none';
+      $('now').style.display='flex';
+      $('chat').style.display='flex'; $('chat').innerHTML='';
+      $('composer').style.display='flex'; $('hint').style.display='block';
+      $('nowImg').src = a.image||''; $('nowTitle').textContent = a.display_title||a.title;
+      $('where').textContent = 'just starting — I’ll stay fully spoiler-safe until I learn where you are';
+      // load any remembered progress
+      fetch('/api/progress?mal_id='+a.mal_id).then(r=>r.json()).then(p=>{
+        if(p.episode>0) $('where').textContent = `you’re up to episode ${p.episode}${a.episodes?' of '+a.episodes:''}`;
+      });
+      botBubble("Hey! Let’s talk about **"+(a.display_title||a.title)+"** 🌸 Tell me what’s happened so far, ask me anything, or share a theory — I’ll keep everything spoiler-free from wherever you are. Where are you up to?");
+      $('msg').focus();
     }
 
-    function renderCards(payload) {
-      const wrap = document.getElementById('cards');
-      wrap.innerHTML = '';
-      for (const f of payload.forecasts) {
-        const dc = dirClass(f.direction);
-        const rows = (f.base_models || []).map(b =>
-          `<tr><td>${b.name}</td><td>${fmtUSD0(b.price)}</td><td>${Number(b.diversity).toFixed(4)}</td><td>${Number(b.weight).toFixed(4)}</td></tr>`
-        ).join('');
-        wrap.insertAdjacentHTML('beforeend', `
-          <div class="card">
-            <div class="label">${f.label}</div>
-            <div class="price">${fmtUSD(f.predicted_price)}</div>
-            <div class="meta">
-              <span class="delta ${dc}">${(f.delta>=0?'+':'')}${Number(f.delta).toLocaleString('en-US',{maximumFractionDigits:2})}</span>
-              <span class="pill ${dc}">${f.direction}</span>
-            </div>
-            <div class="meta" style="margin-top:8px;">Target ${f.target_time_utc} · ${f.minutes_ahead} min ahead · ${f.history_points} ticks analyzed</div>
-            <div class="meta" style="margin-top:3px; font-size:11px;">Model fit @ candle ${f.fit_candle_utc} · live tick fed through the formula</div>
-            <details class="fusion">
-              <summary>CFA fusion · ${f.combination}</summary>
-              <table>
-                <thead><tr><th>Base model</th><th>Predicts</th><th>Diversity</th><th>Weight</th></tr></thead>
-                <tbody>${rows}</tbody>
-              </table>
-            </details>
-          </div>`);
-      }
+    function changeAnime(){
+      $('picker').style.display='block'; $('now').style.display='none';
+      $('chat').style.display='none'; $('composer').style.display='none'; $('hint').style.display='none';
+      $('q').focus();
     }
 
-    function render(payload) {
-      const err = document.getElementById('err');
-      if (!payload.ok) {
-        err.style.display = 'block';
-        err.textContent = 'Could not compute the forecast.\n\n' + (payload.error || 'unknown error');
-        document.getElementById('status').textContent = 'error';
-        return;
-      }
-      err.style.display = 'none';
+    function youBubble(text){
+      const el=document.createElement('div'); el.className='msg you'; el.textContent=text;
+      $('chat').appendChild(el); scroll();
+    }
+    function botBubble(text){
+      const el=document.createElement('div'); el.className='msg bot'; el.textContent=text||'';
+      $('chat').appendChild(el); scroll(); return el;
+    }
+    function scroll(){ $('chat').scrollTop = $('chat').scrollHeight; }
 
-      const spotEl = document.getElementById('spot');
-      spotEl.textContent = fmtUSD(payload.spot);
-      const chg = document.getElementById('chg');
-      if (prevSpot != null) {
-        const d = payload.spot - prevSpot;
-        if (Math.abs(d) >= 0.005) {
-          chg.className = 'chg ' + (d > 0 ? 'up' : 'down');
-          chg.textContent = (d > 0 ? '▲ +' : '▼ ') + Math.abs(d).toLocaleString('en-US',{maximumFractionDigits:2}) + ' since last tick';
+    async function send(){
+      if(streaming) return;
+      const text = $('msg').value.trim(); if(!text || !anime) return;
+      $('msg').value=''; youBubble(text);
+      const bot = botBubble(''); bot.innerHTML='<span class="cursor"></span>';
+      streaming = true; $('sendBtn').disabled=true;
+      let reply = '';
+      try{
+        const r = await fetch('/api/chat', {method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({anime, history, message:text})});
+        const reader = r.body.getReader(); const dec = new TextDecoder();
+        let buf='';
+        while(true){
+          const {value,done} = await reader.read(); if(done) break;
+          buf += dec.decode(value,{stream:true});
+          let i;
+          while((i=buf.indexOf('\n\n'))>=0){
+            const line = buf.slice(0,i).trim(); buf = buf.slice(i+2);
+            if(!line.startsWith('data:')) continue;
+            const ev = JSON.parse(line.slice(5).trim());
+            if(ev.type==='progress'){
+              $('where').textContent = 'you’re '+ev.label;
+            } else if(ev.type==='delta'){
+              reply += ev.text; bot.textContent = reply;
+              bot.innerHTML = esc(reply)+'<span class="cursor"></span>'; scroll();
+            } else if(ev.type==='error'){
+              reply += '\n'+ev.text;
+            }
+          }
         }
-      }
-      prevSpot = payload.spot;
-
-      buildChart(payload);
-      renderCards(payload);
-      document.getElementById('status').textContent = 'live · updated ' + new Date().toLocaleTimeString('en-US', {hour12:false});
+      }catch(e){ reply = reply || '(connection error — is the server running and ANTHROPIC_API_KEY set?)'; }
+      bot.innerHTML = esc(reply);
+      history.push({role:'user',content:text}); history.push({role:'assistant',content:reply});
+      streaming=false; $('sendBtn').disabled=false; $('msg').focus(); scroll();
     }
 
-    async function poll() {
-      if (paused) return;
-      try {
-        const r = await fetch('/api/live', { cache: 'no-store' });
-        render(await r.json());
-      } catch (e) {
-        document.getElementById('status').textContent = 'reconnecting…';
-      }
-    }
-
-    function start() { stop(); timer = setInterval(poll, POLL_MS); }
-    function stop() { if (timer) { clearInterval(timer); timer = null; } }
-
-    document.getElementById('pause').addEventListener('click', (e) => {
-      paused = !paused;
-      document.getElementById('livedot').classList.toggle('paused', paused);
-      e.target.textContent = paused ? '▶ Resume live' : '⏸ Pause live';
-      document.getElementById('status').textContent = paused ? 'paused' : 'live';
-      if (!paused) { poll(); start(); }
-    });
-
-    // Paint instantly from the server-embedded payload, then go live.
-    const INITIAL = {{ initial_json|safe }};
-    render(INITIAL);
-    start();
+    $('searchBtn').onclick = doSearch;
+    $('q').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
+    $('sendBtn').onclick = send;
+    $('msg').addEventListener('keydown', e=>{ if(e.key==='Enter') send(); });
+    $('changeBtn').onclick = changeAnime;
   </script>
 </body>
 </html>
