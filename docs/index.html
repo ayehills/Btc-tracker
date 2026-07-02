@@ -1,0 +1,78 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Anime Companion · spoiler-safe</title>
+  <style>
+    :root{--bg:#0d0b14;--panel:#171221;--line:#2a2336;--text:#ece9f3;--muted:#9b93ad;
+      --accent:#ff5da2;--accent2:#8b5cff;--ok:#39d98a;}
+    *{box-sizing:border-box}
+    body{margin:0;background:radial-gradient(1200px 600px at 70% -10%,rgba(139,92,255,.18),transparent),var(--bg);
+      color:var(--text);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+      min-height:100vh;display:flex;justify-content:center}
+    .wrap{width:100%;max-width:760px;padding:40px 20px 70px}
+    .logo{width:54px;height:54px;border-radius:14px;background:linear-gradient(135deg,var(--accent),var(--accent2));
+      display:flex;align-items:center;justify-content:center;font-size:30px;margin-bottom:14px}
+    h1{font-size:30px;margin:0 0 6px}
+    .tag{color:var(--muted);font-size:16px;line-height:1.55;margin:0 0 26px}
+    .card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin:16px 0}
+    h2{font-size:16px;margin:0 0 12px;color:var(--accent)}
+    ol{margin:0;padding-left:20px;line-height:1.7} li{margin:6px 0}
+    code,pre{background:#241d33;border:1px solid var(--line);border-radius:8px;font-size:13.5px}
+    code{padding:2px 6px} pre{padding:14px 16px;overflow-x:auto;line-height:1.55}
+    .muted{color:var(--muted)} a{color:var(--accent)}
+    .pill{display:inline-block;background:rgba(57,217,138,.12);border:1px solid rgba(57,217,138,.4);
+      color:var(--ok);font-size:12px;font-weight:700;padding:3px 10px;border-radius:999px;margin-bottom:14px}
+    .foot{color:var(--muted);font-size:12.5px;margin-top:26px;line-height:1.6}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="logo">🌸</div>
+    <div class="pill">runs locally · not hosted</div>
+    <h1>Anime Companion</h1>
+    <p class="tag">A chat you can talk to about <b>any anime</b>. It acts like a friend who has
+      seen the whole show — but it will <b>never spoil anything past where you are</b>, and you
+      don’t have to tell it which episode you’re on. It figures out where you are from what you say.</p>
+
+    <div class="card">
+      <h2>How the no-spoiler logic works</h2>
+      <ol>
+        <li>You pick a show and just start chatting — no episode number needed.</li>
+        <li>Each message, it <b>infers your furthest point</b> (mapping any scene or arc you mention
+          to its episode) — conservatively, only moving forward.</li>
+        <li>It then answers with a <b>spoiler-gated</b> prompt: it’s told your current episode and
+          forbidden from revealing, hinting at, or even foreshadowing anything beyond it.</li>
+      </ol>
+    </div>
+
+    <div class="card">
+      <h2>Run it on your machine</h2>
+      <pre>git clone https://github.com/ayehills/Btc-tracker
+cd Btc-tracker
+pip install -r requirements.txt
+export ANTHROPIC_API_KEY=sk-ant-...      # from console.anthropic.com
+python app.py                            # open http://localhost:5000</pre>
+      <p class="muted" style="margin:12px 0 0">Or chat in the terminal:
+        <code>python anime_companion.py "Jujutsu Kaisen"</code></p>
+    </div>
+
+    <div class="card">
+      <h2>Under the hood</h2>
+      <p class="muted" style="margin:0;line-height:1.7">
+        Built on <b>Claude (Opus&nbsp;4.8)</b> via the official Anthropic SDK, with a Flask chat
+        backend and live anime metadata (episode counts, synopsis) from the free
+        <a href="https://jikan.moe" target="_blank" rel="noopener">Jikan&nbsp;/&nbsp;MyAnimeList</a> API.
+        Your API key stays in your environment.
+      </p>
+    </div>
+
+    <div class="foot">
+      This page is just an info card — the companion itself is a local app (it needs a Python
+      backend and your own Anthropic API key, so it can’t run on GitHub&nbsp;Pages).
+      See the <a href="https://github.com/ayehills/Btc-tracker">repository</a> to get started.
+    </div>
+  </div>
+</body>
+</html>
